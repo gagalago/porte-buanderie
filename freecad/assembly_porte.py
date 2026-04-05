@@ -22,6 +22,10 @@ Les bras 1 et 2 sont decales en Z pour eviter collision.
 
 import sys, os, math
 sys.path.insert(0, '/usr/lib/freecad/Mod/Assembly')
+# Sheet Metal workbench (GUI only, crash en headless)
+SM_PATH = os.path.expanduser('~/.local/share/FreeCAD/v1-1/Mod/sheetmetal')
+if os.path.isdir(SM_PATH):
+    sys.path.insert(0, SM_PATH)
 import FreeCAD as App
 import Part
 
@@ -129,93 +133,102 @@ print(f"  {len(ALL_POS)} positions, rot max = {ALL_POS[-1]['angle_deg']:.1f} deg
 # GEOMETRIE: platine pliee (3 cotes)
 # =============================================================================
 
-def make_platine_combinee(depth_dessus, depth_dessous, dx_dessus, dx_dessous):
+def make_platine_combinee(depth_dessus, depth_dessous, dx_dessus, dx_dessous,
+                          cote_side='right'):
     """
-    Platine combinee: 1 seule piece pour 2 pivots (A+B ou a+b).
-    Tole pliee: fond + plat (avec 2 trous) + cote. 2 plis, 1 soudure.
+    Platine combinee: 1 piece pour 2 pivots (A+B ou a+b).
+    Geometrie physiquement correcte (pliable depuis une tole plate):
 
-    Le pivot 'dessus' a son boulon par-dessus (bras 1 au-dessus du plat).
-    Le pivot 'dessous' a son boulon par-dessous (bras 2 en-dessous).
+    Vue en coupe laterale (plan YZ):
 
-    Vue de dessus (plan XY) - le plat s'etend en +Y:
+        z_top  +--+----[A]--[B]----+     <- PLAT (2 trous pivot)
+               |  |                |
+               |  |  pli 1         | pli 2
+               |  |                |
+               |  | FOND           | COTE (raidisseur)
+               |  | (vis)          |
+        z_bot  +--+                |
+               |                   |
+               +---(soudure)-------+
 
-        fond (y=0, contre mur/porte)
-        +--------------------------+
-        |   vis    vis    vis  vis |
-        +--------------------------+  <- pli 1
-        |                          |
-        |     [A] dessus           |  <- trou pivot A a y=depth_dessus
-        |                          |
-        |                          |
-        |            [B] dessous   |  <- trou pivot B a y=depth_dessous
-        |                          |
-        +--------------------------+
-        ^                          ^
-        cote (pli 2 + soudure)     bord libre
+    Le PLAT est au BORD SUPERIEUR du fond (= pli possible).
+    Le COTE se plie depuis le bord du plat et descend.
+    1 soudure: bas du cote <-> fond.
 
-    Parametres:
-      depth_dessus/dessous: profondeur Y du pivot depuis la surface
-      dx_dessus/dessous: position X du pivot (relatif au centre de la platine)
+    En 3D:
+    - Fond: plaque verticale XZ a y=0, de z_bottom a z_top
+    - Plat: plaque horizontale XY a z=z_top, s'etend en +Y
+    - Cote: plaque verticale YZ a y=plat_depth, descend de z_top
 
-    Retourne le shape. Centre X=0, fond a y=0.
+    Retourne le shape. z_top est calcule pour que les bras soient centres sur Z_MID.
     """
     t = TOLE
-    z_plat = Z_MID
-
-    # Largeur: couvre les 2 pivots + marge
     margin = 40
+
+    # Largeur
     x_min = min(dx_dessus, dx_dessous) - margin
     x_max = max(dx_dessus, dx_dessous) + margin
     w = x_max - x_min
-    x_offset = x_min  # decalage du bord gauche
 
-    # Profondeur du plat: jusqu'au pivot le plus profond + marge
+    # Profondeur du plat
     max_depth = max(depth_dessus, depth_dessous)
     plat_depth = max_depth + PIVOT_MARGIN + AXE_HOLE/2
 
-    fond_h = FOND_H
-    z_fond_bottom = z_plat - fond_h / 2
-    h_cote = z_plat - t/2 - z_fond_bottom
+    # Hauteurs: le plat est au sommet du fond = z_top
+    # On veut z_top = Z_MID pour que les bras (dessus/dessous) soient centres
+    z_top = Z_MID
+    z_bottom = z_top - FOND_H
+    cote_h = min(FOND_H * 0.6, 100)
 
     shapes = []
 
-    # FOND: plaque verticale XZ, a y=0
-    fond = Part.makeBox(w, t, fond_h, App.Vector(x_offset, 0, z_fond_bottom))
+    # FOND: plaque verticale XZ a y=0
+    fond = Part.makeBox(w, t, FOND_H, App.Vector(x_min, 0, z_bottom))
     shapes.append(fond)
 
-    # PLAT: plaque horizontale XY
-    plat = Part.makeBox(w, plat_depth, t, App.Vector(x_offset, t, z_plat - t/2))
+    # PLAT: plaque horizontale XY au sommet du fond (z=z_top)
+    plat = Part.makeBox(w, plat_depth, t, App.Vector(x_min, t, z_top - t))
     shapes.append(plat)
 
-    # COTE: plaque verticale YZ, sur le bord gauche (x = x_offset)
-    if h_cote > 10:
-        cote = Part.makeBox(t, plat_depth, h_cote,
-                             App.Vector(x_offset, t, z_plat - t/2 - h_cote))
-        shapes.append(cote)
+    # COTE: plaque verticale YZ, sur le bord OPPOSE aux bras
+    if cote_side == 'right':
+        # Cote a droite (x_max) — pour platine murale (bras viennent de la gauche)
+        cote_x = x_max - t
+    else:
+        # Cote a gauche (x_min) — pour platine porte (bras viennent de la droite)
+        cote_x = x_min
+    cote = Part.makeBox(t, plat_depth, cote_h,
+                         App.Vector(cote_x, t, z_top - t - cote_h))
+    shapes.append(cote)
 
     # BOULONS-PIVOTS integres
     axe_l = TOLE + TUBE_H + 15
-    # Pivot dessus (boulon vers le haut)
     py_dessus = t + max(depth_dessus, 20)
-    shapes.append(Part.makeCylinder(AXE_D/2, axe_l,
-        App.Vector(dx_dessus, py_dessus, z_plat - t/2),
-        App.Vector(0, 0, 1)))
-    # Pivot dessous (boulon vers le bas)
     py_dessous = t + max(depth_dessous, 20)
+    # Dessus: boulon pointe vers le haut depuis le plat
     shapes.append(Part.makeCylinder(AXE_D/2, axe_l,
-        App.Vector(dx_dessous, py_dessous, z_plat + t/2 - axe_l),
+        App.Vector(dx_dessus, py_dessus, z_top - t),
+        App.Vector(0, 0, 1)))
+    # Dessous: boulon pointe vers le bas depuis le plat
+    shapes.append(Part.makeCylinder(AXE_D/2, axe_l,
+        App.Vector(dx_dessous, py_dessous, z_top - axe_l),
         App.Vector(0, 0, 1)))
 
     result = shapes[0]
     for s in shapes[1:]:
         result = result.fuse(s)
 
-    # Trous fixation dans le fond (6 trous, grille 3x2)
-    for dx in [x_offset + 25, (x_offset + x_max)/2, x_max - 25]:
-        for dz in [-40, 40]:
+    # Trous pivot (pour visualiser le passage du boulon dans le plat)
+    for px, py in [(dx_dessus, py_dessus), (dx_dessous, py_dessous)]:
+        hole = Part.makeCylinder(AXE_HOLE/2, t + 20,
+            App.Vector(px, py, z_top - t - 10), App.Vector(0, 0, 1))
+        result = result.cut(hole)
+
+    # Trous fixation dans le fond (6 trous)
+    for dx in [x_min + 25, 0, x_max - 25]:
+        for dz in [z_bottom + FOND_H*0.25, z_bottom + FOND_H*0.75]:
             fix = Part.makeCylinder(6, t + 10,
-                                     App.Vector(dx, -5, z_plat + dz),
-                                     App.Vector(0, 1, 0))
+                App.Vector(dx, -5, dz), App.Vector(0, 1, 0))
             result = result.cut(fix)
 
     return result
@@ -274,25 +287,27 @@ door_wire = Part.makePolygon([
 porte = asm.newObject('Part::Feature', 'Porte')
 porte.Shape = Part.Face(door_wire).extrude(App.Vector(0, 0, DOOR_H))
 
-# --- Platine murale combinee (A+B sur le mur droit) ---
+# --- Platine murale combinee (A+B) ---
 print("  Platine murale combinee (A+B)...")
 MUR_CENTER_X = (Ax + Bx) / 2
 platine_mur = asm.newObject('Part::Feature', 'Platine_Murale')
 platine_mur.Shape = make_platine_combinee(
     DEPTH_A, DEPTH_B,
-    dx_dessus=Ax - MUR_CENTER_X,      # x local du pivot A
-    dx_dessous=Bx - MUR_CENTER_X,     # x local du pivot B
+    dx_dessus=Ax - MUR_CENTER_X,
+    dx_dessous=Bx - MUR_CENTER_X,
+    cote_side='right',  # bras viennent de la gauche (vers l'ouverture)
 )
 platine_mur.Placement = App.Placement(App.Vector(MUR_CENTER_X, RWD, 0), App.Rotation())
 
-# --- Platine porte combinee (a+b, en coords porte) ---
+# --- Platine porte combinee (a+b) ---
 print("  Platine porte combinee (a+b)...")
 PORTE_CENTER_X = (ax_d + bx_d) / 2
 platine_porte = asm.newObject('Part::Feature', 'Platine_Porte')
 platine_porte.Shape = make_platine_combinee(
     DEPTH_a, DEPTH_b,
-    dx_dessus=ax_d - PORTE_CENTER_X,  # x local du pivot a
-    dx_dessous=bx_d - PORTE_CENTER_X, # x local du pivot b
+    dx_dessus=ax_d - PORTE_CENTER_X,
+    dx_dessous=bx_d - PORTE_CENTER_X,
+    cote_side='left',  # bras viennent de la droite (vers le mur)
 )
 platine_porte.Placement = App.Placement(App.Vector(PORTE_CENTER_X, DT, 0), App.Rotation())
 
@@ -374,7 +389,7 @@ def goto(pct):
     # Porte + platines porte + axes porte
     porte.Placement = dp
 
-    # Platine porte combinee: offset local au centre entre a et b
+    # Platine porte: offset local au centre entre a et b
     platine_porte.Placement = dp * App.Placement(
         App.Vector(PORTE_CENTER_X, DT, 0), App.Rotation())
 
