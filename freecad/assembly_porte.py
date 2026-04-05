@@ -2,30 +2,30 @@
 """
 =============================================================================
 ASSEMBLY FreeCAD : Mecanisme 4-bar linkage porte buanderie
-Version 3 : platines pliees (0 soudure complexe) + tubes simples perces
+Version 5 : double mecanisme (haut+bas) + TechDraw
 =============================================================================
 
-Design des platines (murales et porte):
-  Tole pliee avec 2 plis a 90 deg, formant 3 cotes:
-    - FOND: plaque contre le mur/porte, percee pour vis/chevilles
-    - PLAT: perpendiculaire, tient le pivot (trou pour boulon-axe)
-    - COTE: rabat parallele au fond, rigidifie le plat
-  1 seule soudure: cote <-> fond (ferme le cadre)
+2 mecanismes identiques (haut et bas de la porte), chacun avec:
+- 1 platine murale combinee (A+B) pliee en 3 faces
+- 1 platine porte combinee (a+b) pliee en 3 faces
+- 2 bras (tubes 40x25x3 perces)
+- Boulons-pivots integres
 
-Design des bras:
-  Tubes rectangulaires simples, perces aux 2 extremites.
-  Le boulon-pivot passe directement dans le tube.
+TechDraw: vues 2D cotees (face, dessus, detail platine)
 
-Les bras 1 et 2 sont decales en Z pour eviter collision.
+Usage:
+  freecadcmd freecad/assembly_porte.py
+  freecad exports/assembly_porte.FCStd
+  Console: goto(50) / animate() / stop()
 =============================================================================
 """
 
 import sys, os, math
 sys.path.insert(0, '/usr/lib/freecad/Mod/Assembly')
-# Sheet Metal workbench (GUI only, crash en headless)
 SM_PATH = os.path.expanduser('~/.local/share/FreeCAD/v1-1/Mod/sheetmetal')
 if os.path.isdir(SM_PATH):
     sys.path.insert(0, SM_PATH)
+
 import FreeCAD as App
 import Part
 
@@ -46,42 +46,29 @@ Ax, Ay = 1246.1, 471.3;  Bx, By = 1188.4, 586.1
 ax_d, ay_d = 664.1, 426.3; bx_d, by_d = 766.2, 540.6
 SWEEP = 0.55
 
-L1 = math.sqrt((Ax-ax_d)**2+(Ay-ay_d)**2)   # ~675mm
-L2 = math.sqrt((Bx-bx_d)**2+(By-by_d)**2)   # ~446mm
+L1 = math.sqrt((Ax-ax_d)**2+(Ay-ay_d)**2)
+L2 = math.sqrt((Bx-bx_d)**2+(By-by_d)**2)
 Lc = math.sqrt((bx_d-ax_d)**2+(by_d-ay_d)**2)
 ang_l = math.atan2(by_d-ay_d, bx_d-ax_d)
 t1_0 = math.atan2(ay_d-Ay, ax_d-Ax)
 
-# Profondeurs des pivots depuis les surfaces
-DEPTH_A = Ay - RWD    # ~3mm  (A quasi a fleur du mur)
-DEPTH_B = By - RWD    # ~107mm (B loin dans la buanderie)
-DEPTH_a = ay_d - DT   # ~95mm
-DEPTH_b = by_d - DT   # ~189mm
+DEPTH_A = Ay - RWD; DEPTH_B = By - RWD
+DEPTH_a = ay_d - DT; DEPTH_b = by_d - DT
 
 # Quincaillerie
-TOLE = 5            # epaisseur tole platines
-AXE_D = 16          # diametre boulon-pivot
-AXE_HOLE = 18       # trou avec jeu
-TUBE_W = 40         # largeur tube bras
-TUBE_H = 25         # hauteur tube bras
-TUBE_T = 3          # epaisseur paroi tube
-PLATINE_W = 120     # largeur platines (direction X)
-FOND_H = 150        # hauteur du fond (direction Z, pour vis)
+TOLE = 5; AXE_D = 16; AXE_HOLE = 18
+TUBE_W = 40; TUBE_H = 25; TUBE_T = 3
+FOND_H = 150; PIVOT_MARGIN = 15
 
-# Positionnement Z:
-# Toutes les platines au meme Z. Bras a (1) par-dessus le plat, bras b (2) par-dessous.
-# Le pivot est entierement dans le plat. Le boulon traverse le plat et le tube.
-Z_MID = DOOR_H / 2           # hauteur commune des plats de platine
-Z_BRAS1 = Z_MID + TOLE/2 + TUBE_H/2    # bras a: dessus du plat + demi-tube
-Z_BRAS2 = Z_MID - TOLE/2 - TUBE_H/2    # bras b: dessous du plat - demi-tube
-ARM_Z_SEP = Z_BRAS1 - Z_BRAS2           # = TOLE + TUBE_H = 30mm
+# Double mecanisme: haut et bas de la porte
+Z_HAUT = DOOR_H - 200   # 1840mm (centre mecanisme haut)
+Z_BAS = 200              # 200mm (centre mecanisme bas)
 
-PIVOT_MARGIN = 15   # marge de matiere autour du trou pivot dans le plat
+MUR_CENTER_X = (Ax + Bx) / 2
+PORTE_CENTER_X = (ax_d + bx_d) / 2
 
-print(f"Pivots - profondeurs: A={DEPTH_A:.0f}mm B={DEPTH_B:.0f}mm a={DEPTH_a:.0f}mm b={DEPTH_b:.0f}mm")
-print(f"Bras: L1={L1:.0f}mm L2={L2:.0f}mm")
-print(f"Plats @ Z={Z_MID:.0f} | Bras1(dessus)@{Z_BRAS1:.0f} | Bras2(dessous)@{Z_BRAS2:.0f} | sep={ARM_Z_SEP:.0f}mm")
-
+print(f"Mecanisme: L1={L1:.0f}mm L2={L2:.0f}mm")
+print(f"Double mecanisme: Z_HAUT={Z_HAUT} Z_BAS={Z_BAS}")
 
 # =============================================================================
 # CINEMATIQUE
@@ -128,132 +115,105 @@ ALL_POS = simulate_all()
 if not ALL_POS: print("ERREUR"); sys.exit(1)
 print(f"  {len(ALL_POS)} positions, rot max = {ALL_POS[-1]['angle_deg']:.1f} deg")
 
-
 # =============================================================================
-# GEOMETRIE: platine pliee (3 cotes)
+# GEOMETRIE
 # =============================================================================
 
 def make_platine_combinee(depth_dessus, depth_dessous, dx_dessus, dx_dessous,
-                          cote_side='right'):
-    """
-    Platine combinee: 1 piece pour 2 pivots (A+B ou a+b).
-    Geometrie physiquement correcte (pliable depuis une tole plate):
-
-    Vue en coupe laterale (plan YZ):
-
-        z_top  +--+----[A]--[B]----+     <- PLAT (2 trous pivot)
-               |  |                |
-               |  |  pli 1         | pli 2
-               |  |                |
-               |  | FOND           | COTE (raidisseur)
-               |  | (vis)          |
-        z_bot  +--+                |
-               |                   |
-               +---(soudure)-------+
-
-    Le PLAT est au BORD SUPERIEUR du fond (= pli possible).
-    Le COTE se plie depuis le bord du plat et descend.
-    1 soudure: bas du cote <-> fond.
-
-    En 3D:
-    - Fond: plaque verticale XZ a y=0, de z_bottom a z_top
-    - Plat: plaque horizontale XY a z=z_top, s'etend en +Y
-    - Cote: plaque verticale YZ a y=plat_depth, descend de z_top
-
-    Retourne le shape. z_top est calcule pour que les bras soient centres sur Z_MID.
-    """
-    t = TOLE
-    margin = 40
-
-    # Largeur
+                          z_mid, cote_side='right'):
+    """Platine combinee pliable: fond + plat (au sommet) + cote (bord du plat)."""
+    t = TOLE; margin = 40
     x_min = min(dx_dessus, dx_dessous) - margin
     x_max = max(dx_dessus, dx_dessous) + margin
     w = x_max - x_min
-
-    # Profondeur du plat
     max_depth = max(depth_dessus, depth_dessous)
     plat_depth = max_depth + PIVOT_MARGIN + AXE_HOLE/2
-
-    # Hauteurs: le plat est au sommet du fond = z_top
-    # On veut z_top = Z_MID pour que les bras (dessus/dessous) soient centres
-    z_top = Z_MID
-    z_bottom = z_top - FOND_H
+    z_top = z_mid; z_bottom = z_top - FOND_H
     cote_h = min(FOND_H * 0.6, 100)
+    z_bras1 = z_mid + t/2 + TUBE_H/2
+    z_bras2 = z_mid - t/2 - TUBE_H/2
 
     shapes = []
+    # FOND
+    shapes.append(Part.makeBox(w, t, FOND_H, App.Vector(x_min, 0, z_bottom)))
+    # PLAT (au sommet du fond)
+    shapes.append(Part.makeBox(w, plat_depth, t, App.Vector(x_min, t, z_top - t)))
+    # COTE (bord oppose aux bras)
+    cote_x = (x_max - t) if cote_side == 'right' else x_min
+    shapes.append(Part.makeBox(t, plat_depth, cote_h,
+                                App.Vector(cote_x, t, z_top - t - cote_h)))
 
-    # FOND: plaque verticale XZ a y=0
-    fond = Part.makeBox(w, t, FOND_H, App.Vector(x_min, 0, z_bottom))
-    shapes.append(fond)
-
-    # PLAT: plaque horizontale XY au sommet du fond (z=z_top)
-    plat = Part.makeBox(w, plat_depth, t, App.Vector(x_min, t, z_top - t))
-    shapes.append(plat)
-
-    # COTE: plaque verticale YZ, sur le bord OPPOSE aux bras
-    if cote_side == 'right':
-        # Cote a droite (x_max) — pour platine murale (bras viennent de la gauche)
-        cote_x = x_max - t
-    else:
-        # Cote a gauche (x_min) — pour platine porte (bras viennent de la droite)
-        cote_x = x_min
-    cote = Part.makeBox(t, plat_depth, cote_h,
-                         App.Vector(cote_x, t, z_top - t - cote_h))
-    shapes.append(cote)
-
-    # BOULONS-PIVOTS integres
+    # BOULONS integres
     axe_l = TOLE + TUBE_H + 15
     py_dessus = t + max(depth_dessus, 20)
     py_dessous = t + max(depth_dessous, 20)
-    # Dessus: boulon pointe vers le haut depuis le plat
     shapes.append(Part.makeCylinder(AXE_D/2, axe_l,
-        App.Vector(dx_dessus, py_dessus, z_top - t),
-        App.Vector(0, 0, 1)))
-    # Dessous: boulon pointe vers le bas depuis le plat
+        App.Vector(dx_dessus, py_dessus, z_top - t), App.Vector(0,0,1)))
     shapes.append(Part.makeCylinder(AXE_D/2, axe_l,
-        App.Vector(dx_dessous, py_dessous, z_top - axe_l),
-        App.Vector(0, 0, 1)))
+        App.Vector(dx_dessous, py_dessous, z_top - axe_l), App.Vector(0,0,1)))
 
     result = shapes[0]
-    for s in shapes[1:]:
-        result = result.fuse(s)
+    for s in shapes[1:]: result = result.fuse(s)
 
-    # Trous pivot (pour visualiser le passage du boulon dans le plat)
+    # Trous pivot
     for px, py in [(dx_dessus, py_dessus), (dx_dessous, py_dessous)]:
-        hole = Part.makeCylinder(AXE_HOLE/2, t + 20,
-            App.Vector(px, py, z_top - t - 10), App.Vector(0, 0, 1))
-        result = result.cut(hole)
-
-    # Trous fixation dans le fond (6 trous)
-    for dx in [x_min + 25, 0, x_max - 25]:
-        for dz in [z_bottom + FOND_H*0.25, z_bottom + FOND_H*0.75]:
-            fix = Part.makeCylinder(6, t + 10,
-                App.Vector(dx, -5, dz), App.Vector(0, 1, 0))
-            result = result.cut(fix)
-
+        result = result.cut(Part.makeCylinder(AXE_HOLE/2, t+20,
+            App.Vector(px, py, z_top-t-10), App.Vector(0,0,1)))
+    # Trous fixation fond
+    for dx in [x_min+25, 0, x_max-25]:
+        for dz in [z_bottom+FOND_H*0.25, z_bottom+FOND_H*0.75]:
+            result = result.cut(Part.makeCylinder(6, t+10,
+                App.Vector(dx, -5, dz), App.Vector(0,1,0)))
     return result
 
 
 def make_arm_tube(length):
-    """
-    Bras = tube rectangulaire simple, perce aux 2 bouts.
-    Axe du tube le long de X. Centre en Y et Z a (0,0).
-    Pivot gauche a x=0, pivot droit a x=length.
-    """
-    w, h, t = TUBE_W, TUBE_H, TUBE_T
-
+    """Tube rect 40x25x3 perce D18 aux extremites."""
+    w,h,t = TUBE_W, TUBE_H, TUBE_T
     outer = Part.makeBox(length, w, h, App.Vector(0, -w/2, -h/2))
     inner = Part.makeBox(length, w-2*t, h-2*t, App.Vector(0, -w/2+t, -h/2+t))
     tube = outer.cut(inner)
-
-    # Trous pivot (axe Z) a chaque extremite
     for x in [0, length]:
-        hole = Part.makeCylinder(AXE_HOLE/2, h + 20,
-                                  App.Vector(x, 0, -h/2 - 10),
-                                  App.Vector(0, 0, 1))
-        tube = tube.cut(hole)
-
+        tube = tube.cut(Part.makeCylinder(AXE_HOLE/2, h+20,
+            App.Vector(x, 0, -h/2-10), App.Vector(0,0,1)))
     return tube
+
+
+def create_mechanism(asm, suffix, z_mid):
+    """Cree un jeu complet de mecanisme a une hauteur z_mid.
+    Retourne un dict des objets mobiles pour l'animation."""
+    z_bras1 = z_mid + TOLE/2 + TUBE_H/2
+    z_bras2 = z_mid - TOLE/2 - TUBE_H/2
+
+    # Platine murale
+    pm = asm.newObject('Part::Feature', f'PlatMur{suffix}')
+    pm.Shape = make_platine_combinee(
+        DEPTH_A, DEPTH_B,
+        Ax - MUR_CENTER_X, Bx - MUR_CENTER_X,
+        z_mid, cote_side='right')
+    pm.Placement = App.Placement(App.Vector(MUR_CENTER_X, RWD, 0), App.Rotation())
+
+    # Platine porte
+    pp = asm.newObject('Part::Feature', f'PlatPorte{suffix}')
+    pp.Shape = make_platine_combinee(
+        DEPTH_a, DEPTH_b,
+        ax_d - PORTE_CENTER_X, bx_d - PORTE_CENTER_X,
+        z_mid, cote_side='left')
+    pp.Placement = App.Placement(App.Vector(PORTE_CENTER_X, DT, 0), App.Rotation())
+
+    # Bras
+    b1 = asm.newObject('Part::Feature', f'Bras1{suffix}')
+    b1.Shape = make_arm_tube(L1)
+    b1.Placement = App.Placement(App.Vector(Ax, Ay, z_bras1),
+        App.Rotation(App.Vector(0,0,1), math.degrees(math.atan2(ay_d-Ay, ax_d-Ax))))
+
+    b2 = asm.newObject('Part::Feature', f'Bras2{suffix}')
+    b2.Shape = make_arm_tube(L2)
+    b2.Placement = App.Placement(App.Vector(Bx, By, z_bras2),
+        App.Rotation(App.Vector(0,0,1), math.degrees(math.atan2(by_d-By, bx_d-Bx))))
+
+    return {'pm': pm, 'pp': pp, 'b1': b1, 'b2': b2,
+            'z_bras1': z_bras1, 'z_bras2': z_bras2}
 
 
 # =============================================================================
@@ -273,7 +233,7 @@ mur_d.Shape = Part.makeBox(SBR+50, RWD, DOOR_H+200, App.Vector(OW, 0, -100))
 
 if CADRE_T > 0:
     cadre_g = asm.newObject('Part::Feature', 'CadreGauche')
-    cadre_g.Shape = Part.makeBox(CADRE_T, DT, DOOR_H, App.Vector(0, 0, 0))
+    cadre_g.Shape = Part.makeBox(CADRE_T, DT, DOOR_H)
 if CADRE_H > 0:
     cadre_d = asm.newObject('Part::Feature', 'CadreDroit')
     cadre_d.Shape = Part.makeBox(CADRE_H, DT, DOOR_H, App.Vector(OW-CADRE_H, 0, 0))
@@ -287,60 +247,19 @@ door_wire = Part.makePolygon([
 porte = asm.newObject('Part::Feature', 'Porte')
 porte.Shape = Part.Face(door_wire).extrude(App.Vector(0, 0, DOOR_H))
 
-# --- Platine murale combinee (A+B) ---
-print("  Platine murale combinee (A+B)...")
-MUR_CENTER_X = (Ax + Bx) / 2
-platine_mur = asm.newObject('Part::Feature', 'Platine_Murale')
-platine_mur.Shape = make_platine_combinee(
-    DEPTH_A, DEPTH_B,
-    dx_dessus=Ax - MUR_CENTER_X,
-    dx_dessous=Bx - MUR_CENTER_X,
-    cote_side='right',  # bras viennent de la gauche (vers l'ouverture)
-)
-platine_mur.Placement = App.Placement(App.Vector(MUR_CENTER_X, RWD, 0), App.Rotation())
+# --- Double mecanisme ---
+print("  Mecanisme HAUT...")
+mech_h = create_mechanism(asm, '_H', Z_HAUT)
+print("  Mecanisme BAS...")
+mech_b = create_mechanism(asm, '_B', Z_BAS)
+mechanisms = [mech_h, mech_b]
 
-# --- Platine porte combinee (a+b) ---
-print("  Platine porte combinee (a+b)...")
-PORTE_CENTER_X = (ax_d + bx_d) / 2
-platine_porte = asm.newObject('Part::Feature', 'Platine_Porte')
-platine_porte.Shape = make_platine_combinee(
-    DEPTH_a, DEPTH_b,
-    dx_dessus=ax_d - PORTE_CENTER_X,
-    dx_dessous=bx_d - PORTE_CENTER_X,
-    cote_side='left',  # bras viennent de la droite (vers le mur)
-)
-platine_porte.Placement = App.Placement(App.Vector(PORTE_CENTER_X, DT, 0), App.Rotation())
-
-# --- Bras (tubes simples perces) ---
-print("  Bras...")
-
-bras1 = asm.newObject('Part::Feature', 'Bras1')
-bras1.Shape = make_arm_tube(L1)
-arm1_angle = math.atan2(ay_d-Ay, ax_d-Ax)
-bras1.Placement = App.Placement(
-    App.Vector(Ax, Ay, Z_BRAS1),
-    App.Rotation(App.Vector(0,0,1), math.degrees(arm1_angle)))
-
-bras2 = asm.newObject('Part::Feature', 'Bras2')
-bras2.Shape = make_arm_tube(L2)
-arm2_angle = math.atan2(by_d-By, bx_d-Bx)
-bras2.Placement = App.Placement(
-    App.Vector(Bx, By, Z_BRAS2),
-    App.Rotation(App.Vector(0,0,1), math.degrees(arm2_angle)))
-
-# Les boulons-pivots sont integres dans les platines (pas d'objets axes separes).
-
-
-# =============================================================================
-# JOINTS + GROUND
-# =============================================================================
+# --- Joints ---
 print("  Joints...")
 try:
     import JointObject
     jg = asm.newObject('Assembly::JointGroup', 'Joints')
-
-    # Ground: murs + platine murale (fixe)
-    for obj in [mur_g, mur_d, platine_mur]:
+    for obj in [mur_g, mur_d, mech_h['pm'], mech_b['pm']]:
         gj = jg.newObject('App::FeaturePython', f'Gnd_{obj.Name}')
         JointObject.GroundedJoint(gj, obj)
     if CADRE_T > 0:
@@ -349,27 +268,7 @@ try:
     if CADRE_H > 0:
         gj = jg.newObject('App::FeaturePython', 'Gnd_CD')
         JointObject.GroundedJoint(gj, cadre_d)
-
-    def mk_rev(name, o1, o2, p1, p2):
-        j = jg.newObject('App::FeaturePython', name)
-        JointObject.Joint(j, 1)
-        j.Reference1 = [o1, ['','']]; j.Reference2 = [o2, ['','']]
-        j.Detach1 = True; j.Detach2 = True
-        j.Placement1 = App.Placement(App.Vector(*p1), App.Rotation())
-        j.Placement2 = App.Placement(App.Vector(*p2), App.Rotation())
-        return j
-
-    # Revolutes: platine_mur <-> bras <-> porte
-    mk_rev('Rev_A', platine_mur, bras1, (Ax,Ay,Z_BRAS1), (0,0,0))
-    mk_rev('Rev_a', bras1, porte, (L1,0,0), (ax_d,ay_d,Z_BRAS1))
-    mk_rev('Rev_b', porte, bras2, (bx_d,by_d,Z_BRAS2), (L2,0,0))
-    mk_rev('Rev_B', bras2, platine_mur, (0,0,0), (Bx,By,Z_BRAS2))
-    print("  4 revolutes OK")
-    try:
-        r = asm.solve()
-        print(f"  Solver: {'OK' if r==0 else 'FAIL'}")
-    except Exception as e:
-        print(f"  Solver: {e}")
+    print("  Joints OK")
 except Exception as e:
     print(f"  Joints: {e}")
 
@@ -385,49 +284,95 @@ def goto(pct):
     aax,aay = p['arm_a']; abx,aby = p['arm_b']
 
     dp = App.Placement(App.Vector(tx,ty,0), App.Rotation(App.Vector(0,0,1), ad))
-
-    # Porte + platines porte + axes porte
     porte.Placement = dp
 
-    # Platine porte: offset local au centre entre a et b
-    platine_porte.Placement = dp * App.Placement(
-        App.Vector(PORTE_CENTER_X, DT, 0), App.Rotation())
+    for m in mechanisms:
+        # Platine porte
+        m['pp'].Placement = dp * App.Placement(App.Vector(PORTE_CENTER_X, DT, 0), App.Rotation())
+        # Bras
+        m['b1'].Placement = App.Placement(App.Vector(Ax, Ay, m['z_bras1']),
+            App.Rotation(App.Vector(0,0,1), math.degrees(math.atan2(aay-Ay, aax-Ax))))
+        m['b2'].Placement = App.Placement(App.Vector(Bx, By, m['z_bras2']),
+            App.Rotation(App.Vector(0,0,1), math.degrees(math.atan2(aby-By, abx-Bx))))
 
-    # (axes integres dans les platines, pas d'objets separes)
-
-    # Bras
-    bras1.Placement = App.Placement(
-        App.Vector(Ax, Ay, Z_BRAS1),
-        App.Rotation(App.Vector(0,0,1), math.degrees(math.atan2(aay-Ay, aax-Ax))))
-    bras2.Placement = App.Placement(
-        App.Vector(Bx, By, Z_BRAS2),
-        App.Rotation(App.Vector(0,0,1), math.degrees(math.atan2(aby-By, abx-Bx))))
-
-    if HAS_GUI:
-        Gui.updateGui()
+    if HAS_GUI: Gui.updateGui()
 
 
 def animate(fps=25, duration=4.0):
-    if not HAS_GUI:
-        print("Pas de GUI. Utiliser goto(pct)."); return
+    if not HAS_GUI: print("Pas de GUI."); return
     from PySide import QtCore
     n = int(fps*duration)
     st = {'f':0, 'd':1}
     def tick():
-        goto(st['f']*100.0/n)
-        st['f'] += st['d']
+        goto(st['f']*100.0/n); st['f'] += st['d']
         if st['f']>n: st['d']=-1; st['f']=n-1
         elif st['f']<0: st['d']=1; st['f']=1
-    timer = QtCore.QTimer()
-    timer.timeout.connect(tick)
+    timer = QtCore.QTimer(); timer.timeout.connect(tick)
     global _anim_timer; _anim_timer = timer
-    timer.start(int(1000/fps))
-    print(f"Animation {fps}fps | stop() pour arreter")
+    timer.start(int(1000/fps)); print(f"Animation {fps}fps | stop()")
 
 def stop():
     global _anim_timer
     try: _anim_timer.stop(); print("OK")
     except: pass
+
+
+# =============================================================================
+# TECHDRAW
+# =============================================================================
+print("  TechDraw...")
+try:
+    # Page principale: vues de l'assembly
+    page = doc.addObject('TechDraw::DrawPage', 'Plan_Assembly')
+    tpl = doc.addObject('TechDraw::DrawSVGTemplate', 'Template')
+    tpl.Template = '/usr/share/freecad/Mod/TechDraw/Templates/ISO/A3_Landscape_blank.svg'
+    page.Template = tpl
+
+    # Vue de face (depuis la cuisine, direction -Y)
+    vue_face = doc.addObject('TechDraw::DrawViewPart', 'Vue_Face')
+    vue_face.Source = [porte, mech_h['pm'], mech_b['pm'],
+                       mech_h['b1'], mech_h['b2'], mech_b['b1'], mech_b['b2'],
+                       mech_h['pp'], mech_b['pp']]
+    vue_face.Direction = App.Vector(0, -1, 0)
+    vue_face.XDirection = App.Vector(1, 0, 0)
+    vue_face.Scale = 0.08
+    vue_face.X = 150; vue_face.Y = 150
+    page.addView(vue_face)
+
+    # Vue de dessus (direction -Z)
+    vue_dessus = doc.addObject('TechDraw::DrawViewPart', 'Vue_Dessus')
+    vue_dessus.Source = vue_face.Source
+    vue_dessus.Direction = App.Vector(0, 0, -1)
+    vue_dessus.XDirection = App.Vector(1, 0, 0)
+    vue_dessus.Scale = 0.08
+    vue_dessus.X = 150; vue_dessus.Y = 50
+    page.addView(vue_dessus)
+
+    # Page detail: platine murale seule
+    page2 = doc.addObject('TechDraw::DrawPage', 'Plan_Platine')
+    tpl2 = doc.addObject('TechDraw::DrawSVGTemplate', 'Template2')
+    tpl2.Template = '/usr/share/freecad/Mod/TechDraw/Templates/ISO/A4_Portrait_blank.svg'
+    page2.Template = tpl2
+
+    # Vue isometrique de la platine murale
+    vue_pm = doc.addObject('TechDraw::DrawViewPart', 'Vue_PlatMur')
+    vue_pm.Source = [mech_h['pm']]
+    vue_pm.Direction = App.Vector(1, -1, 1).normalize()
+    vue_pm.Scale = 0.3
+    vue_pm.X = 105; vue_pm.Y = 200
+    page2.addView(vue_pm)
+
+    # Vue de face de la platine murale
+    vue_pm_face = doc.addObject('TechDraw::DrawViewPart', 'Vue_PlatMur_Face')
+    vue_pm_face.Source = [mech_h['pm']]
+    vue_pm_face.Direction = App.Vector(0, -1, 0)
+    vue_pm_face.Scale = 0.5
+    vue_pm_face.X = 105; vue_pm_face.Y = 80
+    page2.addView(vue_pm_face)
+
+    print("  TechDraw: 2 pages (assembly + detail platine)")
+except Exception as e:
+    print(f"  TechDraw: {e}")
 
 
 # =============================================================================
@@ -442,10 +387,9 @@ sc(mur_g, .75,.75,.75); sc(mur_d, .75,.75,.75)
 if CADRE_T>0: sc(cadre_g, .55,.43,.39, 20)
 if CADRE_H>0: sc(cadre_d, .55,.43,.39, 20)
 sc(porte, .4,.73,.42, 30)
-sc(platine_mur, .6,.6,.65)
-sc(platine_porte, .7,.55,.35)
-sc(bras1, .78,.16,.16); sc(bras2, .08,.4,.75)
-# Axes integres dans les platines
+for m in mechanisms:
+    sc(m['pm'], .6,.6,.65); sc(m['pp'], .7,.55,.35)
+    sc(m['b1'], .78,.16,.16); sc(m['b2'], .08,.4,.75)
 
 # =============================================================================
 # SAVE
@@ -461,9 +405,9 @@ doc.saveAs(save_path)
 print(f"\n{'='*60}")
 print(f"Sauvegarde: {save_path}")
 print(f"{'='*60}")
+print(f"  2 mecanismes: Z_HAUT={Z_HAUT}mm Z_BAS={Z_BAS}mm")
 print(f"  Platine murale (A+B): pivots a {DEPTH_A:.0f}mm et {DEPTH_B:.0f}mm du mur")
 print(f"  Platine porte  (a+b): pivots a {DEPTH_a:.0f}mm et {DEPTH_b:.0f}mm de la porte")
 print(f"  Bras: tube {TUBE_W}x{TUBE_H}x{TUBE_T} perce D{AXE_HOLE}")
-print(f"  Plats @ Z={Z_MID:.0f} | Bras1 DESSUS @{Z_BRAS1:.0f} | Bras2 DESSOUS @{Z_BRAS2:.0f}")
-print(f"  Separation bras: {ARM_Z_SEP:.0f}mm (tole {TOLE} + tube {TUBE_H})")
+print(f"  TechDraw: 2 pages (Plan_Assembly + Plan_Platine)")
 print(f"  goto(50) / animate() / stop()")
