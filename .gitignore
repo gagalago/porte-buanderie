@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 exports/frames_resultat/
 .claude/
+exports/*.FCBak
+exports/porte_animable.FCStd

@@ -129,34 +129,50 @@ print(f"  {len(ALL_POS)} positions, rot max = {ALL_POS[-1]['angle_deg']:.1f} deg
 # GEOMETRIE: platine pliee (3 cotes)
 # =============================================================================
 
-def make_platine(depth, axe='dessus'):
+def make_platine_combinee(depth_dessus, depth_dessous, dx_dessus, dx_dessous):
     """
-    Platine pliee a plat: patron unique en tole, 2 plis a 90 deg, 1 soudure.
-    Inclut le boulon-pivot (axe) integre dans la shape.
+    Platine combinee: 1 seule piece pour 2 pivots (A+B ou a+b).
+    Tole pliee: fond + plat (avec 2 trous) + cote. 2 plis, 1 soudure.
 
-    Vue de cote (plan YZ), le pivot est ENTIEREMENT dans le plat:
+    Le pivot 'dessus' a son boulon par-dessus (bras 1 au-dessus du plat).
+    Le pivot 'dessous' a son boulon par-dessous (bras 2 en-dessous).
 
-        FOND (contre mur/porte)    <- 4 trous vis/chevilles
-        |  |
-        |  |  pli 1
-        +--+----[O]----+          <- trou pivot + boulon integre
-        |     PLAT      |
-        |               |
-        +--+   pli 2    |
-        |  |   COTE     |         <- rigidifie le plat
-        |  +------------+
-        (soudure cote <-> fond)
+    Vue de dessus (plan XY) - le plat s'etend en +Y:
 
-    axe='dessus': boulon pointe vers le haut (pivots a/A, bras au-dessus)
-    axe='dessous': boulon pointe vers le bas (pivots b/B, bras en-dessous)
+        fond (y=0, contre mur/porte)
+        +--------------------------+
+        |   vis    vis    vis  vis |
+        +--------------------------+  <- pli 1
+        |                          |
+        |     [A] dessus           |  <- trou pivot A a y=depth_dessus
+        |                          |
+        |                          |
+        |            [B] dessous   |  <- trou pivot B a y=depth_dessous
+        |                          |
+        +--------------------------+
+        ^                          ^
+        cote (pli 2 + soudure)     bord libre
 
-    Retourne le shape. Fond a y=0, plat vers +Y, pivot a (0, depth).
+    Parametres:
+      depth_dessus/dessous: profondeur Y du pivot depuis la surface
+      dx_dessus/dessous: position X du pivot (relatif au centre de la platine)
+
+    Retourne le shape. Centre X=0, fond a y=0.
     """
-    w = PLATINE_W
     t = TOLE
     z_plat = Z_MID
 
-    plat_depth = max(depth + PIVOT_MARGIN + AXE_HOLE/2, 50)
+    # Largeur: couvre les 2 pivots + marge
+    margin = 40
+    x_min = min(dx_dessus, dx_dessous) - margin
+    x_max = max(dx_dessus, dx_dessous) + margin
+    w = x_max - x_min
+    x_offset = x_min  # decalage du bord gauche
+
+    # Profondeur du plat: jusqu'au pivot le plus profond + marge
+    max_depth = max(depth_dessus, depth_dessous)
+    plat_depth = max_depth + PIVOT_MARGIN + AXE_HOLE/2
+
     fond_h = FOND_H
     z_fond_bottom = z_plat - fond_h / 2
     h_cote = z_plat - t/2 - z_fond_bottom
@@ -164,43 +180,38 @@ def make_platine(depth, axe='dessus'):
     shapes = []
 
     # FOND: plaque verticale XZ, a y=0
-    fond = Part.makeBox(w, t, fond_h, App.Vector(-w/2, 0, z_fond_bottom))
+    fond = Part.makeBox(w, t, fond_h, App.Vector(x_offset, 0, z_fond_bottom))
     shapes.append(fond)
 
     # PLAT: plaque horizontale XY
-    plat = Part.makeBox(w, plat_depth, t, App.Vector(-w/2, t, z_plat - t/2))
+    plat = Part.makeBox(w, plat_depth, t, App.Vector(x_offset, t, z_plat - t/2))
     shapes.append(plat)
 
-    # COTE: plaque verticale YZ, UN seul bord X (x = -w/2)
+    # COTE: plaque verticale YZ, sur le bord gauche (x = x_offset)
     if h_cote > 10:
         cote = Part.makeBox(t, plat_depth, h_cote,
-                             App.Vector(-w/2, t, z_plat - t/2 - h_cote))
+                             App.Vector(x_offset, t, z_plat - t/2 - h_cote))
         shapes.append(cote)
 
-    # BOULON-PIVOT integre (cylindre traversant le plat)
-    pivot_y = t + max(depth, 20)
-    axe_l = TOLE + TUBE_H + 15  # longueur du boulon
-    if axe == 'dessus':
-        # Boulon pointe vers le haut: du bas du plat vers le haut
-        axe_shape = Part.makeCylinder(AXE_D/2, axe_l,
-                                       App.Vector(0, pivot_y, z_plat - t/2),
-                                       App.Vector(0, 0, 1))
-    else:
-        # Boulon pointe vers le bas: du haut du plat vers le bas
-        axe_shape = Part.makeCylinder(AXE_D/2, axe_l,
-                                       App.Vector(0, pivot_y, z_plat + t/2 - axe_l),
-                                       App.Vector(0, 0, 1))
-    shapes.append(axe_shape)
+    # BOULONS-PIVOTS integres
+    axe_l = TOLE + TUBE_H + 15
+    # Pivot dessus (boulon vers le haut)
+    py_dessus = t + max(depth_dessus, 20)
+    shapes.append(Part.makeCylinder(AXE_D/2, axe_l,
+        App.Vector(dx_dessus, py_dessus, z_plat - t/2),
+        App.Vector(0, 0, 1)))
+    # Pivot dessous (boulon vers le bas)
+    py_dessous = t + max(depth_dessous, 20)
+    shapes.append(Part.makeCylinder(AXE_D/2, axe_l,
+        App.Vector(dx_dessous, py_dessous, z_plat + t/2 - axe_l),
+        App.Vector(0, 0, 1)))
 
     result = shapes[0]
     for s in shapes[1:]:
         result = result.fuse(s)
 
-    # Trou pivot dans le plat (le boulon est deja la, on perce le trou pour le jeu visuel)
-    # En fait le boulon est fusionne, pas besoin de percer
-
-    # Trous fixation dans le fond (4 trous, axe Y)
-    for dx in [-30, 30]:
+    # Trous fixation dans le fond (6 trous, grille 3x2)
+    for dx in [x_offset + 25, (x_offset + x_max)/2, x_max - 25]:
         for dz in [-40, 40]:
             fix = Part.makeCylinder(6, t + 10,
                                      App.Vector(dx, -5, z_plat + dz),
@@ -263,29 +274,27 @@ door_wire = Part.makePolygon([
 porte = asm.newObject('Part::Feature', 'Porte')
 porte.Shape = Part.Face(door_wire).extrude(App.Vector(0, 0, DOOR_H))
 
-# --- Platines murales (sur face buanderie du mur droit, y=RWD) ---
-print("  Platines murales...")
+# --- Platine murale combinee (A+B sur le mur droit) ---
+print("  Platine murale combinee (A+B)...")
+MUR_CENTER_X = (Ax + Bx) / 2
+platine_mur = asm.newObject('Part::Feature', 'Platine_Murale')
+platine_mur.Shape = make_platine_combinee(
+    DEPTH_A, DEPTH_B,
+    dx_dessus=Ax - MUR_CENTER_X,      # x local du pivot A
+    dx_dessous=Bx - MUR_CENTER_X,     # x local du pivot B
+)
+platine_mur.Placement = App.Placement(App.Vector(MUR_CENTER_X, RWD, 0), App.Rotation())
 
-# Platine A (pivot dessus = bras a par-dessus)
-plat_A = asm.newObject('Part::Feature', 'Platine_MurA')
-plat_A.Shape = make_platine(DEPTH_A, axe='dessus')
-plat_A.Placement = App.Placement(App.Vector(Ax, RWD, 0), App.Rotation())
-
-# Platine B (pivot dessous = bras b par-dessous)
-plat_B = asm.newObject('Part::Feature', 'Platine_MurB')
-plat_B.Shape = make_platine(DEPTH_B, axe='dessous')
-plat_B.Placement = App.Placement(App.Vector(Bx, RWD, 0), App.Rotation())
-
-# --- Platines porte (sur face arriere porte, y=DT en coords porte) ---
-print("  Platines porte...")
-
-plat_a = asm.newObject('Part::Feature', 'Platine_Porte_a')
-plat_a.Shape = make_platine(DEPTH_a, axe='dessus')
-plat_a.Placement = App.Placement(App.Vector(ax_d, DT, 0), App.Rotation())
-
-plat_b = asm.newObject('Part::Feature', 'Platine_Porte_b')
-plat_b.Shape = make_platine(DEPTH_b, axe='dessous')
-plat_b.Placement = App.Placement(App.Vector(bx_d, DT, 0), App.Rotation())
+# --- Platine porte combinee (a+b, en coords porte) ---
+print("  Platine porte combinee (a+b)...")
+PORTE_CENTER_X = (ax_d + bx_d) / 2
+platine_porte = asm.newObject('Part::Feature', 'Platine_Porte')
+platine_porte.Shape = make_platine_combinee(
+    DEPTH_a, DEPTH_b,
+    dx_dessus=ax_d - PORTE_CENTER_X,  # x local du pivot a
+    dx_dessous=bx_d - PORTE_CENTER_X, # x local du pivot b
+)
+platine_porte.Placement = App.Placement(App.Vector(PORTE_CENTER_X, DT, 0), App.Rotation())
 
 # --- Bras (tubes simples perces) ---
 print("  Bras...")
@@ -315,8 +324,8 @@ try:
     import JointObject
     jg = asm.newObject('Assembly::JointGroup', 'Joints')
 
-    # Ground: murs + platines murales (fixes)
-    for obj in [mur_g, mur_d, plat_A, plat_B]:
+    # Ground: murs + platine murale (fixe)
+    for obj in [mur_g, mur_d, platine_mur]:
         gj = jg.newObject('App::FeaturePython', f'Gnd_{obj.Name}')
         JointObject.GroundedJoint(gj, obj)
     if CADRE_T > 0:
@@ -336,10 +345,10 @@ try:
         return j
 
     # Revolutes: platine_mur <-> bras <-> porte
-    mk_rev('Rev_A', plat_A, bras1, (Ax,Ay,Z_BRAS1), (0,0,0))
+    mk_rev('Rev_A', platine_mur, bras1, (Ax,Ay,Z_BRAS1), (0,0,0))
     mk_rev('Rev_a', bras1, porte, (L1,0,0), (ax_d,ay_d,Z_BRAS1))
     mk_rev('Rev_b', porte, bras2, (bx_d,by_d,Z_BRAS2), (L2,0,0))
-    mk_rev('Rev_B', bras2, plat_B, (0,0,0), (Bx,By,Z_BRAS2))
+    mk_rev('Rev_B', bras2, platine_mur, (0,0,0), (Bx,By,Z_BRAS2))
     print("  4 revolutes OK")
     try:
         r = asm.solve()
@@ -365,9 +374,9 @@ def goto(pct):
     # Porte + platines porte + axes porte
     porte.Placement = dp
 
-    # Platines porte: elles ont un offset local
-    plat_a.Placement = dp * App.Placement(App.Vector(ax_d, DT, 0), App.Rotation())
-    plat_b.Placement = dp * App.Placement(App.Vector(bx_d, DT, 0), App.Rotation())
+    # Platine porte combinee: offset local au centre entre a et b
+    platine_porte.Placement = dp * App.Placement(
+        App.Vector(PORTE_CENTER_X, DT, 0), App.Rotation())
 
     # (axes integres dans les platines, pas d'objets separes)
 
@@ -418,8 +427,8 @@ sc(mur_g, .75,.75,.75); sc(mur_d, .75,.75,.75)
 if CADRE_T>0: sc(cadre_g, .55,.43,.39, 20)
 if CADRE_H>0: sc(cadre_d, .55,.43,.39, 20)
 sc(porte, .4,.73,.42, 30)
-sc(plat_A, .6,.6,.65); sc(plat_B, .6,.6,.65)
-sc(plat_a, .7,.55,.35); sc(plat_b, .7,.55,.35)
+sc(platine_mur, .6,.6,.65)
+sc(platine_porte, .7,.55,.35)
 sc(bras1, .78,.16,.16); sc(bras2, .08,.4,.75)
 # Axes integres dans les platines
 
@@ -437,10 +446,8 @@ doc.saveAs(save_path)
 print(f"\n{'='*60}")
 print(f"Sauvegarde: {save_path}")
 print(f"{'='*60}")
-print(f"  Platine A: fond 150mm, plat {max(DEPTH_A,30):.0f}mm de profondeur")
-print(f"  Platine B: fond 150mm, plat {max(DEPTH_B,30):.0f}mm de profondeur")
-print(f"  Platine a: fond 150mm, plat {max(DEPTH_a,30):.0f}mm de profondeur")
-print(f"  Platine b: fond 150mm, plat {max(DEPTH_b,30):.0f}mm de profondeur")
+print(f"  Platine murale (A+B): pivots a {DEPTH_A:.0f}mm et {DEPTH_B:.0f}mm du mur")
+print(f"  Platine porte  (a+b): pivots a {DEPTH_a:.0f}mm et {DEPTH_b:.0f}mm de la porte")
 print(f"  Bras: tube {TUBE_W}x{TUBE_H}x{TUBE_T} perce D{AXE_HOLE}")
 print(f"  Plats @ Z={Z_MID:.0f} | Bras1 DESSUS @{Z_BRAS1:.0f} | Bras2 DESSOUS @{Z_BRAS2:.0f}")
 print(f"  Separation bras: {ARM_Z_SEP:.0f}mm (tole {TOLE} + tube {TUBE_H})")
