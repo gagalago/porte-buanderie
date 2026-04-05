@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "freecad": {
+      "command": "freecad-mcp",
+      "env": {
+        "FREECAD_MODE": "xmlrpc"
+      }
+    }
+  }
+}

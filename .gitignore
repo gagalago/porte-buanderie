@@ -1,0 +1,5 @@
+.venv/
+__pycache__/
+*.pyc
+exports/frames_resultat/
+.claude/
