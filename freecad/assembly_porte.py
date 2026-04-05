@@ -167,6 +167,71 @@ def make_platine_combinee(depth_dessus, depth_dessous, dx_dessus, dx_dessous,
     return result
 
 
+def make_patron_plat(depth_dessus, depth_dessous, dx_dessus, dx_dessous,
+                     cote_side='right'):
+    """
+    Patron a plat (mise a plat / depliage) de la platine combinee.
+    Les 3 faces sont depliees dans le plan XY:
+
+        Y=0                                                      Y=total
+        +----FOND (150mm)----+--BA--+----PLAT (~185mm)----+--BA--+--COTE--+
+        |                    |      |                     |      |        |
+        |  (vis holes)       |      |  [A]   [B] pivots   |      |        |
+        |                    |      |                     |      |        |
+        +--------------------+------+---------------------+------+--------+
+
+    BA = bend allowance (tolerance de pliage ~8mm pour R=3, t=5, K=0.44)
+    Les lignes de pliage sont a Y=FOND_H et Y=FOND_H+BA+plat_depth.
+
+    Retourne (shape, bend_line_y1, bend_line_y2) pour le marquage.
+    """
+    t = TOLE; margin = 40; BEND_R = 3; K_FACTOR = 0.44
+
+    x_min = min(dx_dessus, dx_dessous) - margin
+    x_max = max(dx_dessus, dx_dessous) + margin
+    w = x_max - x_min
+
+    max_depth = max(depth_dessus, depth_dessous)
+    plat_depth = max_depth + PIVOT_MARGIN + AXE_HOLE/2
+    cote_h = min(FOND_H * 0.6, 100)
+
+    # Bend allowance pour pli 90 deg
+    BA = (math.pi / 2) * (BEND_R + K_FACTOR * t)  # ~8.2mm
+
+    # Positions Y des sections dans le patron
+    fond_start = 0
+    fond_end = FOND_H
+    bend1_center = fond_end + BA / 2
+    plat_start = fond_end + BA
+    plat_end = plat_start + plat_depth
+    bend2_center = plat_end + BA / 2
+    cote_start = plat_end + BA
+    cote_end = cote_start + cote_h
+
+    # Shape: plaque plate complete
+    shape = Part.makeBox(w, cote_end, t, App.Vector(x_min, 0, 0))
+
+    # Trous pivot dans la section plat
+    py_dessus = plat_start + t + max(depth_dessus, 20)
+    py_dessous = plat_start + t + max(depth_dessous, 20)
+    for px, py in [(dx_dessus, py_dessus), (dx_dessous, py_dessous)]:
+        shape = shape.cut(Part.makeCylinder(AXE_HOLE/2, t+20,
+            App.Vector(px, py, -10), App.Vector(0,0,1)))
+
+    # Trous fixation dans la section fond
+    for dx in [x_min+25, 0, x_max-25]:
+        for dy in [FOND_H*0.25, FOND_H*0.75]:
+            shape = shape.cut(Part.makeCylinder(6, t+10,
+                App.Vector(dx, dy, -5), App.Vector(0,0,1)))
+
+    # Lignes de pliage (fines rainures pour les marquer visuellement)
+    for by in [bend1_center, bend2_center]:
+        groove = Part.makeBox(w, 1, t*0.3, App.Vector(x_min, by-0.5, t*0.7))
+        shape = shape.cut(groove)
+
+    return shape, bend1_center, bend2_center
+
+
 def make_arm_tube(length):
     """Tube rect 40x25x3 perce D18 aux extremites."""
     w,h,t = TUBE_W, TUBE_H, TUBE_T
@@ -370,7 +435,47 @@ try:
     vue_pm_face.X = 105; vue_pm_face.Y = 80
     page2.addView(vue_pm_face)
 
-    print("  TechDraw: 2 pages (assembly + detail platine)")
+    # === Page 3: MISE A PLAT (patrons deplies) ===
+    page3 = doc.addObject('TechDraw::DrawPage', 'Plan_MiseAPlat')
+    tpl3 = doc.addObject('TechDraw::DrawSVGTemplate', 'Template3')
+    tpl3.Template = '/usr/share/freecad/Mod/TechDraw/Templates/ISO/A3_Landscape_blank.svg'
+    page3.Template = tpl3
+
+    # Patron plat: platine murale
+    patron_mur = doc.addObject('Part::Feature', 'Patron_Murale')
+    pm_shape, pm_b1, pm_b2 = make_patron_plat(
+        DEPTH_A, DEPTH_B,
+        Ax - MUR_CENTER_X, Bx - MUR_CENTER_X,
+        cote_side='right')
+    patron_mur.Shape = pm_shape
+    patron_mur.Placement = App.Placement(App.Vector(-600, -400, 0), App.Rotation())
+
+    vue_patron_mur = doc.addObject('TechDraw::DrawViewPart', 'Vue_Patron_Murale')
+    vue_patron_mur.Source = [patron_mur]
+    vue_patron_mur.Direction = App.Vector(0, 0, -1)  # vue de dessus
+    vue_patron_mur.XDirection = App.Vector(1, 0, 0)
+    vue_patron_mur.Scale = 0.6
+    vue_patron_mur.X = 100; vue_patron_mur.Y = 190
+    page3.addView(vue_patron_mur)
+
+    # Patron plat: platine porte
+    patron_porte = doc.addObject('Part::Feature', 'Patron_Porte')
+    pp_shape, pp_b1, pp_b2 = make_patron_plat(
+        DEPTH_a, DEPTH_b,
+        ax_d - PORTE_CENTER_X, bx_d - PORTE_CENTER_X,
+        cote_side='left')
+    patron_porte.Shape = pp_shape
+    patron_porte.Placement = App.Placement(App.Vector(-600, -800, 0), App.Rotation())
+
+    vue_patron_porte = doc.addObject('TechDraw::DrawViewPart', 'Vue_Patron_Porte')
+    vue_patron_porte.Source = [patron_porte]
+    vue_patron_porte.Direction = App.Vector(0, 0, -1)
+    vue_patron_porte.XDirection = App.Vector(1, 0, 0)
+    vue_patron_porte.Scale = 0.5
+    vue_patron_porte.X = 100; vue_patron_porte.Y = 70
+    page3.addView(vue_patron_porte)
+
+    print("  TechDraw: 3 pages (assembly + detail platine + mise a plat)")
 except Exception as e:
     print(f"  TechDraw: {e}")
 
@@ -390,6 +495,12 @@ sc(porte, .4,.73,.42, 30)
 for m in mechanisms:
     sc(m['pm'], .6,.6,.65); sc(m['pp'], .7,.55,.35)
     sc(m['b1'], .78,.16,.16); sc(m['b2'], .08,.4,.75)
+
+# Cacher les patrons dans la vue 3D (visibles uniquement dans TechDraw)
+for name in ['Patron_Murale', 'Patron_Porte']:
+    obj = doc.getObject(name)
+    if obj and HAS_GUI:
+        obj.ViewObject.Visibility = False
 
 # =============================================================================
 # SAVE
