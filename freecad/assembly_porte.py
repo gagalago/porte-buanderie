@@ -475,7 +475,135 @@ try:
     vue_patron_porte.X = 100; vue_patron_porte.Y = 70
     page3.addView(vue_patron_porte)
 
-    print("  TechDraw: 3 pages (assembly + detail platine + mise a plat)")
+    # === Cotes sur les patrons ===
+    doc.recompute()  # necessaire pour que les vues aient leurs edges
+
+    def add_dim(page, vue, type_, refs, x, y, fmt='%.0f'):
+        """Ajoute une cote TechDraw."""
+        name = f'Dim_{vue.Name}_{len([o for o in doc.Objects if "Dim_" in o.Name])}'
+        dim = doc.addObject('TechDraw::DrawViewDimension', name)
+        dim.Type = type_
+        dim.References2D = [(vue, r) for r in refs]
+        dim.X = x; dim.Y = y
+        dim.FormatSpec = fmt
+        dim.FormatSpecOverTolerance = ''
+        dim.FormatSpecUnderTolerance = ''
+        page.addView(dim)
+        return dim
+
+    def add_extent_dims(page, vue, label):
+        """Ajoute cotes d'encombrement (largeur et longueur) via extent."""
+        # Horizontal extent (largeur)
+        dim_w = doc.addObject('TechDraw::DrawViewDimension', f'DimW_{label}')
+        dim_w.Type = 'DistanceX'
+        dim_w.MeasureType = 'Projected'
+        dim_w.References3D = [(vue.Source[0], 'Face1')]
+        dim_w.References2D = [(vue, 'Edge1')]
+        page.addView(dim_w)
+
+    def add_patron_dims(page, vue, patron_shape, bend_y1, bend_y2,
+                        depth_dessus, depth_dessous, dx_dessus, dx_dessous):
+        """Ajoute des cotes a un patron deplie."""
+        s = vue.Scale
+        margin = 40
+        x_min = min(dx_dessus, dx_dessous) - margin
+        x_max = max(dx_dessus, dx_dessous) + margin
+        w = x_max - x_min
+        t = TOLE
+        BEND_R = 3; K_FACTOR = 0.44
+        BA = (math.pi/2) * (BEND_R + K_FACTOR * t)
+
+        max_depth = max(depth_dessus, depth_dessous)
+        plat_depth = max_depth + PIVOT_MARGIN + AXE_HOLE/2
+        cote_h = min(FOND_H * 0.6, 100)
+        total_l = FOND_H + BA + plat_depth + BA + cote_h
+
+        plat_start = FOND_H + BA
+        py_dessus = plat_start + t + max(depth_dessus, 20)
+        py_dessous = plat_start + t + max(depth_dessous, 20)
+
+        # On utilise des annotations textuelles pour les cotes
+        # (plus fiable que les dim qui necessitent des refs edges exactes)
+
+        def add_annot(name, x, y, text, size=8):
+            a = doc.addObject('TechDraw::DrawViewAnnotation', name)
+            a.Text = [text]
+            a.TextSize = size
+            a.X = x; a.Y = y
+            page.addView(a)
+            return a
+
+        # Position de base de la vue
+        vx, vy = float(vue.X.Value), float(vue.Y.Value)
+
+        # Cotes principales (annotations positionnees autour du patron)
+        # Largeur totale (en haut)
+        add_annot(f'Cote_W_{vue.Name}', vx, vy + total_l*s/2 + 12,
+                  f'<- {w:.0f}mm ->')
+
+        # Longueur totale (a droite)
+        add_annot(f'Cote_L_{vue.Name}', vx + w*s/2 + 20, vy,
+                  f'{total_l:.0f}mm total', 7)
+
+        # Sections (a gauche)
+        left_x = vx - w*s/2 - 25
+        y_fond = vy + total_l*s/2 - FOND_H*s/2
+        y_plat = vy + total_l*s/2 - (FOND_H + BA)*s - plat_depth*s/2
+        y_cote = vy - total_l*s/2 + cote_h*s/2
+
+        add_annot(f'Sec_Fond_{vue.Name}', left_x, y_fond,
+                  f'FOND\n{FOND_H:.0f}mm', 6)
+        add_annot(f'Sec_Plat_{vue.Name}', left_x, y_plat,
+                  f'PLAT\n{plat_depth:.0f}mm', 6)
+        add_annot(f'Sec_Cote_{vue.Name}', left_x, y_cote,
+                  f'COTE\n{cote_h:.0f}mm', 6)
+
+        # Plis
+        add_annot(f'Pli1_{vue.Name}', vx, vy + total_l*s/2 - FOND_H*s,
+                  f'--- pli 1 (R{BEND_R}) ---', 5)
+        add_annot(f'Pli2_{vue.Name}', vx, vy + total_l*s/2 - (FOND_H+BA+plat_depth)*s,
+                  f'--- pli 2 (R{BEND_R}) ---', 5)
+
+        # Trous pivot
+        add_annot(f'Trou_dessus_{vue.Name}', vx + dx_dessus*s,
+                  vy + total_l*s/2 - py_dessus*s - 8,
+                  f'D{AXE_HOLE} (dessus)', 5)
+        add_annot(f'Trou_dessous_{vue.Name}', vx + dx_dessous*s,
+                  vy + total_l*s/2 - py_dessous*s - 8,
+                  f'D{AXE_HOLE} (dessous)', 5)
+
+        # Entraxe pivots
+        entraxe_x = abs(dx_dessus - dx_dessous)
+        entraxe_y = abs(py_dessus - py_dessous)
+        add_annot(f'Entraxe_{vue.Name}', vx, y_plat - plat_depth*s/3,
+                  f'Entraxe: {entraxe_x:.0f}x{entraxe_y:.0f}mm', 5)
+
+        # Epaisseur
+        add_annot(f'Ep_{vue.Name}', vx, vy - total_l*s/2 - 10,
+                  f'Tole acier {TOLE}mm | 2 plis 90deg R{BEND_R} | 1 soudure', 5)
+
+    # Cotes patron murale
+    add_patron_dims(page3, vue_patron_mur, pm_shape, pm_b1, pm_b2,
+                    DEPTH_A, DEPTH_B,
+                    Ax - MUR_CENTER_X, Bx - MUR_CENTER_X)
+
+    # Cotes patron porte
+    add_patron_dims(page3, vue_patron_porte, pp_shape, pp_b1, pp_b2,
+                    DEPTH_a, DEPTH_b,
+                    ax_d - PORTE_CENTER_X, bx_d - PORTE_CENTER_X)
+
+    # Titres
+    def add_annot(name, x, y, text, size=8):
+        a = doc.addObject('TechDraw::DrawViewAnnotation', name)
+        a.Text = [text]; a.TextSize = size; a.X = x; a.Y = y
+        page3.addView(a); return a
+
+    add_annot('Titre_Mur', float(vue_patron_mur.X.Value), float(vue_patron_mur.Y.Value) + 145,
+              'PLATINE MURALE (x2)', 12)
+    add_annot('Titre_Porte', float(vue_patron_porte.X.Value), float(vue_patron_porte.Y.Value) + 155,
+              'PLATINE PORTE (x2)', 12)
+
+    print("  TechDraw: 3 pages + cotes mise a plat")
 except Exception as e:
     print(f"  TechDraw: {e}")
 
