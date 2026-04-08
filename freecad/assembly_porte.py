@@ -535,69 +535,73 @@ try:
     def add_auto_dimensions(doc, page, vue, suffix, scale,
                             w, fond_h, plat_depth, cote_h, BA,
                             axe_hole, cote_side):
-        """Ajoute des cotes TechDraw en trouvant les edges de la shape source."""
+        """Ajoute des cotes TechDraw via les edges de la VUE projetee (pas la source 3D).
+        Les noms d'edges dans TechDraw sont 'Edge0', 'Edge1'... indexes a 0."""
+        # Forcer le recompute pour que la vue ait ses edges
+        doc.recompute()
+
+        # Acceder aux edges de la vue projetee via getEdges()
+        # Les edges TechDraw sont numerotes a partir de 0
+        edge_data = []
+        try:
+            # TechDraw edges via la projection
+            proj_edges = vue.getVisibleEdges()
+        except:
+            proj_edges = []
+
+        # Fallback: utiliser les edges de la shape source (projetes)
+        # TechDraw reference les edges comme 'Edge0', 'Edge1'...
         src_shape = vue.Source[0].Shape
-        vert_edges = []
-        horiz_edges = []
-        circles = []
+        found = {}
 
         for i, edge in enumerate(src_shape.Edges):
-            ename = f'Edge{i}'
+            ename = f'Edge{i+1}'
             if hasattr(edge.Curve, 'Radius'):
-                circles.append((ename, edge.Curve.Radius))
+                r = edge.Curve.Radius
+                if abs(r * 2 - axe_hole) < 2 and 'pivot' not in found:
+                    found['pivot'] = ename
+                elif abs(r * 2 - 12) < 2 and 'fix' not in found:
+                    found['fix'] = ename
                 continue
             if len(edge.Vertexes) < 2:
                 continue
             v1, v2 = edge.Vertexes[0].Point, edge.Vertexes[1].Point
             dx, dz = abs(v1.x - v2.x), abs(v1.z - v2.z)
-            if dz < 1 and dx > 10:
-                horiz_edges.append((ename, dx))
-            elif dx < 1 and dz > 10:
-                vert_edges.append((ename, dz))
+            length = edge.Length
+            if dz < 1 and dx > 10:  # horizontal
+                if abs(length - w) < 5 and 'fond_w' not in found:
+                    found['fond_w'] = ename
+            elif dx < 1 and dz > 10:  # vertical
+                if abs(length - fond_h) < 5 and 'fond_h' not in found:
+                    found['fond_h'] = ename
+                elif abs(length - plat_depth) < 5 and 'plat_h' not in found:
+                    found['plat_h'] = ename
 
         dim_n = [0]
-        def add_dim(type_, refs, x_off=0, y_off=15):
+        def add_dim(type_, edge_name, x_off=0, y_off=15):
             name = f'Dim{dim_n[0]}_{suffix}'; dim_n[0] += 1
             d = doc.addObject('TechDraw::DrawViewDimension', name)
             d.Type = type_
-            d.References2D = [(vue, r) for r in refs]
+            # TechDraw attend References2D et References3D
+            d.References2D = [(vue, edge_name)]
+            # Aussi setter la Reference3D pour que la valeur soit correcte
+            d.References3D = [(vue.Source[0], edge_name)]
             d.FormatSpec = '%.0f'
             d.X = x_off; d.Y = y_off
             page.addView(d)
 
-        # Trouver 1 edge par type de dimension
-        found = {}
-        for ename, length in vert_edges:
-            if abs(length - fond_h) < 5 and 'fond_h' not in found:
-                found['fond_h'] = ename
-            elif abs(length - plat_depth) < 5 and 'plat_h' not in found:
-                found['plat_h'] = ename
-        for ename, length in horiz_edges:
-            if abs(length - w) < 5 and 'fond_w' not in found:
-                found['fond_w'] = ename
-            elif abs(length - cote_h) < 3 and 'cote_w' not in found:
-                found['cote_w'] = ename
-        for ename, radius in circles:
-            if abs(radius * 2 - axe_hole) < 2 and 'pivot' not in found:
-                found['pivot'] = ename
-            elif abs(radius * 2 - 12) < 2 and 'fix' not in found:
-                found['fix'] = ename
+        for key in ['fond_w', 'fond_h', 'plat_h', 'pivot', 'fix']:
+            if key in found:
+                if key == 'fond_w':
+                    add_dim('Distance', found[key], 0, 25)
+                elif key in ('fond_h', 'plat_h'):
+                    add_dim('Distance', found[key], -30, 0)
+                elif key == 'pivot':
+                    add_dim('Diameter', found[key], 15, 5)
+                elif key == 'fix':
+                    add_dim('Diameter', found[key], 15, 5)
 
-        # Ajouter les cotes
-        if 'fond_w' in found:
-            add_dim('Distance', [found['fond_w']], 0, 20)
-        if 'fond_h' in found:
-            add_dim('Distance', [found['fond_h']], -25, 0)
-        if 'plat_h' in found:
-            add_dim('Distance', [found['plat_h']], -25, 0)
-        if 'cote_w' in found:
-            add_dim('Distance', [found['cote_w']], 0, 15)
-        if 'pivot' in found:
-            add_dim('Diameter', [found['pivot']], 12, 5)
-        if 'fix' in found:
-            add_dim('Diameter', [found['fix']], 12, 5)
-
-        print(f"    Cotes: {len(found)} trouvees ({', '.join(found.keys())})")
+        print(f"    Cotes: {len(found)} ({', '.join(found.keys())})")
 
     # === Page 3: Patron murale ===
     make_patron_page('Plan_Patron_Murale', 'PLATINE MURALE (x2)',
