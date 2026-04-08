@@ -508,37 +508,25 @@ try:
         pz_dessous = plat_bottom + TOLE + max(depth_dessous, 20)
         entraxe_z = abs(pz_dessus - pz_dessous)
 
-        # Vue de face (direction -Y, on voit le plan XZ = la forme en L)
-        scale = min(180.0 / h_total, 220.0 / w_total, 0.7)
+        # Vue de face: patron a gauche, annotations a droite
+        # A4 Landscape = 297 x 210mm
+        scale = min(140.0 / h_total, 140.0 / w_total, 0.45)
         vue = doc.addObject('TechDraw::DrawViewPart', f'Vue_{page_name}')
         vue.Source = [patron]
         vue.Direction = App.Vector(0, -1, 0)
         vue.XDirection = App.Vector(1, 0, 0)
         vue.Scale = scale
-        vue.X = 148; vue.Y = 105
+        vue.X = 90   # vue decalee a gauche
+        vue.Y = 110  # centree verticalement
         pg.addView(vue)
         doc.recompute()
 
-        # --- Annotations (minimalistes, pas de chevauchement) ---
-        def annot(name, x, y, text, size=7):
-            a = doc.addObject('TechDraw::DrawViewAnnotation', f'{name}_{page_name}')
-            a.Text = [text]; a.TextSize = size; a.X = x; a.Y = y
-            pg.addView(a)
-
-        # Seulement 3 annotations: titre en haut, specs en bas, dims a droite
-        annot('Titre', 148, 12, titre, 10)
-
-        annot('Dims', 255, 50,
-              f'FOND {w:.0f}x{FOND_H:.0f}\n'
-              f'PLAT {w:.0f}x{plat_depth:.0f}\n'
-              f'COTE {plat_depth:.0f}x{cote_h:.0f}', 5)
-        annot('Trous', 255, 95,
-              f'2x D{AXE_HOLE} pivot\n'
-              f'6x D12 fixation\n'
-              f'Entraxe {entraxe_x:.0f}x{entraxe_z:.0f}', 5)
-
-        annot('Specs', 148, 200,
-              f'Tole {TOLE}mm | Plis R{BEND_R} | x2', 6)
+        # --- Annotations: titre seul (cotes dans le tableau SVG) ---
+        a = doc.addObject('TechDraw::DrawViewAnnotation', f'Titre_{page_name}')
+        a.Text = [titre]
+        a.TextSize = 8
+        a.X = 90; a.Y = 15
+        pg.addView(a)
 
         if HAS_GUI:
             patron.ViewObject.Visibility = False
