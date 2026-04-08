@@ -435,175 +435,120 @@ try:
     vue_pm_face.X = 105; vue_pm_face.Y = 80
     page2.addView(vue_pm_face)
 
-    # === Page 3: MISE A PLAT (patrons deplies) ===
-    page3 = doc.addObject('TechDraw::DrawPage', 'Plan_MiseAPlat')
-    tpl3 = doc.addObject('TechDraw::DrawSVGTemplate', 'Template3')
-    tpl3.Template = '/usr/share/freecad/Mod/TechDraw/Templates/ISO/A3_Landscape_blank.svg'
-    page3.Template = tpl3
+    # === Helper pour creer une page patron avec cotes ===
+    def make_patron_page(page_name, titre, tpl_name,
+                         depth_dessus, depth_dessous, dx_dessus, dx_dessous,
+                         cote_side):
+        """Cree une page TechDraw A4 pour un patron deplie avec cotes."""
+        pg = doc.addObject('TechDraw::DrawPage', page_name)
+        tp = doc.addObject('TechDraw::DrawSVGTemplate', tpl_name)
+        tp.Template = '/usr/share/freecad/Mod/TechDraw/Templates/ISO/A4_Landscape_blank.svg'
+        pg.Template = tp
 
-    # Patron plat: platine murale
-    patron_mur = doc.addObject('Part::Feature', 'Patron_Murale')
-    pm_shape, pm_b1, pm_b2 = make_patron_plat(
-        DEPTH_A, DEPTH_B,
-        Ax - MUR_CENTER_X, Bx - MUR_CENTER_X,
-        cote_side='right')
-    patron_mur.Shape = pm_shape
-    patron_mur.Placement = App.Placement(App.Vector(-600, -400, 0), App.Rotation())
+        # Creer le patron
+        patron = doc.addObject('Part::Feature', f'Patron_{page_name}')
+        shape, b1, b2 = make_patron_plat(
+            depth_dessus, depth_dessous, dx_dessus, dx_dessous, cote_side)
+        patron.Shape = shape
+        patron.Placement = App.Placement(
+            App.Vector(-600, -400 - len(doc.Objects)*10, 0), App.Rotation())
 
-    vue_patron_mur = doc.addObject('TechDraw::DrawViewPart', 'Vue_Patron_Murale')
-    vue_patron_mur.Source = [patron_mur]
-    vue_patron_mur.Direction = App.Vector(0, 0, -1)  # vue de dessus
-    vue_patron_mur.XDirection = App.Vector(1, 0, 0)
-    vue_patron_mur.Scale = 0.6
-    vue_patron_mur.X = 100; vue_patron_mur.Y = 190
-    page3.addView(vue_patron_mur)
-
-    # Patron plat: platine porte
-    patron_porte = doc.addObject('Part::Feature', 'Patron_Porte')
-    pp_shape, pp_b1, pp_b2 = make_patron_plat(
-        DEPTH_a, DEPTH_b,
-        ax_d - PORTE_CENTER_X, bx_d - PORTE_CENTER_X,
-        cote_side='left')
-    patron_porte.Shape = pp_shape
-    patron_porte.Placement = App.Placement(App.Vector(-600, -800, 0), App.Rotation())
-
-    vue_patron_porte = doc.addObject('TechDraw::DrawViewPart', 'Vue_Patron_Porte')
-    vue_patron_porte.Source = [patron_porte]
-    vue_patron_porte.Direction = App.Vector(0, 0, -1)
-    vue_patron_porte.XDirection = App.Vector(1, 0, 0)
-    vue_patron_porte.Scale = 0.5
-    vue_patron_porte.X = 100; vue_patron_porte.Y = 70
-    page3.addView(vue_patron_porte)
-
-    # === Cotes sur les patrons ===
-    doc.recompute()  # necessaire pour que les vues aient leurs edges
-
-    def add_dim(page, vue, type_, refs, x, y, fmt='%.0f'):
-        """Ajoute une cote TechDraw."""
-        name = f'Dim_{vue.Name}_{len([o for o in doc.Objects if "Dim_" in o.Name])}'
-        dim = doc.addObject('TechDraw::DrawViewDimension', name)
-        dim.Type = type_
-        dim.References2D = [(vue, r) for r in refs]
-        dim.X = x; dim.Y = y
-        dim.FormatSpec = fmt
-        dim.FormatSpecOverTolerance = ''
-        dim.FormatSpecUnderTolerance = ''
-        page.addView(dim)
-        return dim
-
-    def add_extent_dims(page, vue, label):
-        """Ajoute cotes d'encombrement (largeur et longueur) via extent."""
-        # Horizontal extent (largeur)
-        dim_w = doc.addObject('TechDraw::DrawViewDimension', f'DimW_{label}')
-        dim_w.Type = 'DistanceX'
-        dim_w.MeasureType = 'Projected'
-        dim_w.References3D = [(vue.Source[0], 'Face1')]
-        dim_w.References2D = [(vue, 'Edge1')]
-        page.addView(dim_w)
-
-    def add_patron_dims(page, vue, patron_shape, bend_y1, bend_y2,
-                        depth_dessus, depth_dessous, dx_dessus, dx_dessous):
-        """Ajoute des cotes a un patron deplie."""
-        s = vue.Scale
-        margin = 40
+        # Dimensions du patron
+        margin = 40; t = TOLE; BEND_R = 3; K_FACTOR = 0.44
+        BA = (math.pi/2) * (BEND_R + K_FACTOR * t)
         x_min = min(dx_dessus, dx_dessous) - margin
         x_max = max(dx_dessus, dx_dessous) + margin
         w = x_max - x_min
-        t = TOLE
-        BEND_R = 3; K_FACTOR = 0.44
-        BA = (math.pi/2) * (BEND_R + K_FACTOR * t)
-
         max_depth = max(depth_dessus, depth_dessous)
         plat_depth = max_depth + PIVOT_MARGIN + AXE_HOLE/2
         cote_h = min(FOND_H * 0.6, 100)
         total_l = FOND_H + BA + plat_depth + BA + cote_h
-
+        entraxe_x = abs(dx_dessus - dx_dessous)
         plat_start = FOND_H + BA
         py_dessus = plat_start + t + max(depth_dessus, 20)
         py_dessous = plat_start + t + max(depth_dessous, 20)
+        entraxe_y = abs(py_dessus - py_dessous)
 
-        # On utilise des annotations textuelles pour les cotes
-        # (plus fiable que les dim qui necessitent des refs edges exactes)
+        # Vue de dessus du patron (echelle pour tenir en A4 landscape)
+        scale = min(250.0 / total_l, 180.0 / w, 0.8)
+        vue = doc.addObject('TechDraw::DrawViewPart', f'Vue_{page_name}')
+        vue.Source = [patron]
+        vue.Direction = App.Vector(0, 0, -1)
+        vue.XDirection = App.Vector(1, 0, 0)
+        vue.Scale = scale
+        vue.X = 148; vue.Y = 110
+        pg.addView(vue)
 
-        def add_annot(name, x, y, text, size=8):
-            a = doc.addObject('TechDraw::DrawViewAnnotation', name)
-            a.Text = [text]
-            a.TextSize = size
-            a.X = x; a.Y = y
-            page.addView(a)
-            return a
+        doc.recompute()
 
-        # Position de base de la vue
-        vx, vy = float(vue.X.Value), float(vue.Y.Value)
+        # Annotations de cotes
+        def annot(name, x, y, text, size=7):
+            a = doc.addObject('TechDraw::DrawViewAnnotation', f'{name}_{page_name}')
+            a.Text = [text]; a.TextSize = size; a.X = x; a.Y = y
+            pg.addView(a)
 
-        # Cotes principales (annotations positionnees autour du patron)
-        # Largeur totale (en haut)
-        add_annot(f'Cote_W_{vue.Name}', vx, vy + total_l*s/2 + 12,
-                  f'<- {w:.0f}mm ->')
+        vx, vy = 148, 110
+        s = scale
 
-        # Longueur totale (a droite)
-        add_annot(f'Cote_L_{vue.Name}', vx + w*s/2 + 20, vy,
-                  f'{total_l:.0f}mm total', 7)
+        # Titre
+        annot('Titre', vx, vy + total_l*s/2 + 18, titre, 10)
 
-        # Sections (a gauche)
-        left_x = vx - w*s/2 - 25
-        y_fond = vy + total_l*s/2 - FOND_H*s/2
-        y_plat = vy + total_l*s/2 - (FOND_H + BA)*s - plat_depth*s/2
-        y_cote = vy - total_l*s/2 + cote_h*s/2
+        # Largeur
+        annot('CoteW', vx, vy + total_l*s/2 + 8, f'{w:.0f}mm')
 
-        add_annot(f'Sec_Fond_{vue.Name}', left_x, y_fond,
-                  f'FOND\n{FOND_H:.0f}mm', 6)
-        add_annot(f'Sec_Plat_{vue.Name}', left_x, y_plat,
-                  f'PLAT\n{plat_depth:.0f}mm', 6)
-        add_annot(f'Sec_Cote_{vue.Name}', left_x, y_cote,
-                  f'COTE\n{cote_h:.0f}mm', 6)
+        # Sections a gauche
+        lx = vx - w*s/2 - 18
+        annot('Fond', lx, vy + total_l*s/2 - FOND_H*s/2,
+              f'FOND {FOND_H:.0f}', 6)
+        annot('Plat', lx, vy + total_l*s/2 - (FOND_H+BA)*s - plat_depth*s/2,
+              f'PLAT {plat_depth:.0f}', 6)
+        annot('Cote', lx, vy - total_l*s/2 + cote_h*s/2,
+              f'COTE {cote_h:.0f}', 6)
+
+        # Longueur a droite
+        annot('CoteL', vx + w*s/2 + 15, vy, f'{total_l:.0f}mm\ntotal', 6)
 
         # Plis
-        add_annot(f'Pli1_{vue.Name}', vx, vy + total_l*s/2 - FOND_H*s,
-                  f'--- pli 1 (R{BEND_R}) ---', 5)
-        add_annot(f'Pli2_{vue.Name}', vx, vy + total_l*s/2 - (FOND_H+BA+plat_depth)*s,
-                  f'--- pli 2 (R{BEND_R}) ---', 5)
+        annot('Pli1', vx + w*s/4, vy + total_l*s/2 - FOND_H*s,
+              f'pli 90deg R{BEND_R}', 5)
+        annot('Pli2', vx + w*s/4, vy + total_l*s/2 - (FOND_H+BA+plat_depth)*s,
+              f'pli 90deg R{BEND_R}', 5)
 
-        # Trous pivot
-        add_annot(f'Trou_dessus_{vue.Name}', vx + dx_dessus*s,
-                  vy + total_l*s/2 - py_dessus*s - 8,
-                  f'D{AXE_HOLE} (dessus)', 5)
-        add_annot(f'Trou_dessous_{vue.Name}', vx + dx_dessous*s,
-                  vy + total_l*s/2 - py_dessous*s - 8,
-                  f'D{AXE_HOLE} (dessous)', 5)
+        # Pivots
+        annot('PivDessus', vx + dx_dessus*s + 12,
+              vy + total_l*s/2 - py_dessus*s,
+              f'D{AXE_HOLE} dessus', 5)
+        annot('PivDessous', vx + dx_dessous*s + 12,
+              vy + total_l*s/2 - py_dessous*s,
+              f'D{AXE_HOLE} dessous', 5)
 
-        # Entraxe pivots
-        entraxe_x = abs(dx_dessus - dx_dessous)
-        entraxe_y = abs(py_dessus - py_dessous)
-        add_annot(f'Entraxe_{vue.Name}', vx, y_plat - plat_depth*s/3,
-                  f'Entraxe: {entraxe_x:.0f}x{entraxe_y:.0f}mm', 5)
+        # Entraxe + specs
+        annot('Entraxe', vx, vy - total_l*s/2 - 8,
+              f'Entraxe pivots: {entraxe_x:.0f} x {entraxe_y:.0f}mm', 6)
+        annot('Specs', vx, vy - total_l*s/2 - 18,
+              f'Tole acier {TOLE}mm | 2 plis R{BEND_R} | 1 soudure | x2', 5)
 
-        # Epaisseur
-        add_annot(f'Ep_{vue.Name}', vx, vy - total_l*s/2 - 10,
-                  f'Tole acier {TOLE}mm | 2 plis 90deg R{BEND_R} | 1 soudure', 5)
+        # Cacher patron dans la vue 3D
+        if HAS_GUI:
+            patron.ViewObject.Visibility = False
 
-    # Cotes patron murale
-    add_patron_dims(page3, vue_patron_mur, pm_shape, pm_b1, pm_b2,
-                    DEPTH_A, DEPTH_B,
-                    Ax - MUR_CENTER_X, Bx - MUR_CENTER_X)
+        return pg
 
-    # Cotes patron porte
-    add_patron_dims(page3, vue_patron_porte, pp_shape, pp_b1, pp_b2,
-                    DEPTH_a, DEPTH_b,
-                    ax_d - PORTE_CENTER_X, bx_d - PORTE_CENTER_X)
+    # === Page 3: Patron murale ===
+    make_patron_page('Plan_Patron_Murale', 'PLATINE MURALE (x2)',
+                     'Tpl_PatMur',
+                     DEPTH_A, DEPTH_B,
+                     Ax - MUR_CENTER_X, Bx - MUR_CENTER_X,
+                     cote_side='right')
 
-    # Titres
-    def add_annot(name, x, y, text, size=8):
-        a = doc.addObject('TechDraw::DrawViewAnnotation', name)
-        a.Text = [text]; a.TextSize = size; a.X = x; a.Y = y
-        page3.addView(a); return a
+    # === Page 4: Patron porte ===
+    make_patron_page('Plan_Patron_Porte', 'PLATINE PORTE (x2)',
+                     'Tpl_PatPorte',
+                     DEPTH_a, DEPTH_b,
+                     ax_d - PORTE_CENTER_X, bx_d - PORTE_CENTER_X,
+                     cote_side='left')
 
-    add_annot('Titre_Mur', float(vue_patron_mur.X.Value), float(vue_patron_mur.Y.Value) + 145,
-              'PLATINE MURALE (x2)', 12)
-    add_annot('Titre_Porte', float(vue_patron_porte.X.Value), float(vue_patron_porte.Y.Value) + 155,
-              'PLATINE PORTE (x2)', 12)
-
-    print("  TechDraw: 3 pages + cotes mise a plat")
+    print("  TechDraw: 4 pages (assembly + platine 3D + patron mur + patron porte)")
 except Exception as e:
     print(f"  TechDraw: {e}")
 
@@ -624,11 +569,7 @@ for m in mechanisms:
     sc(m['pm'], .6,.6,.65); sc(m['pp'], .7,.55,.35)
     sc(m['b1'], .78,.16,.16); sc(m['b2'], .08,.4,.75)
 
-# Cacher les patrons dans la vue 3D (visibles uniquement dans TechDraw)
-for name in ['Patron_Murale', 'Patron_Porte']:
-    obj = doc.getObject(name)
-    if obj and HAS_GUI:
-        obj.ViewObject.Visibility = False
+# (patrons caches dans la vue 3D par make_patron_page)
 
 # =============================================================================
 # SAVE
