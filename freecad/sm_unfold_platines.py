@@ -153,42 +153,38 @@ def create_sm_platine(doc, name, depth_dessus, depth_dessous,
     doc.recompute()
     print(f"  Cote: {cote_obj.Shape.BoundBox}")
 
-    # --- Trous pivot dans le plat (AVANT depliage) ---
+    # --- Trous pivot + fixation: couper directement dans la shape SM ---
     py_dessus = TOLE + max(depth_dessus, 20)
     py_dessous = TOLE + max(depth_dessous, 20)
     z_plat = FOND_H + TOLE/2 + BEND_R
 
-    last_feat = cote_obj
-    for label, px, py in [('PivA', dx_dessus, py_dessus),
-                           ('PivB', dx_dessous, py_dessous)]:
+    shape_with_holes = cote_obj.Shape.copy()
+
+    # Trous pivot dans le plat
+    for px, py in [(dx_dessus, py_dessus), (dx_dessous, py_dessous)]:
         hole = Part.makeCylinder(AXE_HOLE/2, TOLE + 20,
             App.Vector(px, py, z_plat - 10), App.Vector(0, 0, 1))
-        cut_feat = body.newObject('Part::Feature', f'{label}_{name}')
-        cut_feat.Shape = last_feat.Shape.cut(hole)
-        last_feat = cut_feat
+        shape_with_holes = shape_with_holes.cut(hole)
 
-    # Trous fixation fond
+    # Trous fixation dans le fond
     for dx in [x_min + 25, 0, x_max - 25]:
         for dz in [FOND_H * 0.25, FOND_H * 0.75]:
             fix = Part.makeCylinder(6, TOLE + 10,
                 App.Vector(dx, -5, dz), App.Vector(0, 1, 0))
-            cut_feat = body.newObject('Part::Feature', f'Fix_{name}_{len(body.Group)}')
-            cut_feat.Shape = last_feat.Shape.cut(fix)
-            last_feat = cut_feat
+            shape_with_holes = shape_with_holes.cut(fix)
 
-    print(f"  Trous perces ({2 + 6} trous)")
+    # Appliquer la shape percee a un objet Part::Feature (hors du body)
+    perce = doc.addObject('Part::Feature', f'Perce_{name}')
+    perce.Shape = shape_with_holes
+    print(f"  Trous perces (2 pivot + 6 fixation)")
 
-    # --- Depliage (sur la piece SM, pas sur les cuts) ---
+    # --- Depliage ---
     print("  Depliage...")
     try:
         bac = BendAllowanceCalculator.from_single_value(0.44, 'ansi')
+        # Deplier la shape SM (cote_obj) — la shape de base sans trous
         ref_face, unfolded_shape, bend_lines, normal, bend_info = getUnfold(
             bac, cote_obj, 'Face1')
-
-        # Appliquer les memes trous au patron deplie
-        # Les trous dans le plat: dans le patron, le plat est deplie
-        # On ne peut pas simplement couper les memes coordonnees car le depliage
-        # transforme la geometrie. On montre le patron SM brut.
 
         unfold_obj = doc.addObject('Part::Feature', f'Deplie_{name}')
         unfold_obj.Shape = unfolded_shape
@@ -205,12 +201,16 @@ def create_sm_platine(doc, name, depth_dessus, depth_dessous,
         print(f"  Deplie: {unfold_obj.Shape.BoundBox}")
         print(f"  {len(bend_info)} plis: {[f'{b.angle:.0f}deg R{b.radius:.0f}' for b in bend_info]}")
 
-        return body, unfold_obj
+        # Cacher la piece SM brute (sans trous), montrer la percee
+        if hasattr(cote_obj, 'ViewObject'):
+            cote_obj.ViewObject.Visibility = False
+
+        return body, unfold_obj, perce
 
     except Exception as e:
         print(f"  Depliage ECHOUE: {e}")
         import traceback; traceback.print_exc()
-        return body, None
+        return body, None, perce
 
 
 # =============================================================================
@@ -224,7 +224,7 @@ doc = App.newDocument('SM_Platines')
 
 # --- Platine murale ---
 MUR_CX = (Ax + Bx) / 2
-body_mur, deplie_mur = create_sm_platine(
+body_mur, deplie_mur, perce_mur = create_sm_platine(
     doc, 'PlatineMurale',
     DEPTH_A, DEPTH_B,
     Ax - MUR_CX, Bx - MUR_CX,
@@ -232,7 +232,7 @@ body_mur, deplie_mur = create_sm_platine(
 
 # --- Platine porte (decalee en Y) ---
 PORTE_CX = (ax_d + bx_d) / 2
-body_porte, deplie_porte = create_sm_platine(
+body_porte, deplie_porte, perce_porte = create_sm_platine(
     doc, 'PlatinePorte',
     DEPTH_a, DEPTH_b,
     ax_d - PORTE_CX, bx_d - PORTE_CX,
@@ -240,6 +240,8 @@ body_porte, deplie_porte = create_sm_platine(
 
 if body_porte:
     body_porte.Placement = App.Placement(App.Vector(0, -500, 0), App.Rotation())
+if perce_porte:
+    perce_porte.Placement = App.Placement(App.Vector(0, -500, 0), App.Rotation())
 if deplie_porte:
     deplie_porte.Placement = App.Placement(
         App.Vector(deplie_porte.Placement.Base.x, -500, 0), App.Rotation())
