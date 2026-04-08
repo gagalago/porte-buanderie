@@ -528,48 +528,86 @@ try:
         vx, vy = 148, 105
         s = scale
 
-        # Titre
-        annot('Titre', vx, 15, titre, 10)
+        # Helper: convert 3D Z coordinate to page Y
+        # Z=0 is bottom of patron, Z=h_total is top
+        # Page Y goes DOWN (y=0 is top of page)
+        patron_bottom_y = vy + h_total * s / 2   # page Y of Z=0
+        patron_top_y = vy - h_total * s / 2      # page Y of Z=h_total
+        def z_to_y(z):
+            return patron_bottom_y - z * s
 
-        # FOND: section du bas (Z = 0 a FOND_H)
-        annot('Fond', vx - w*s/2 - 15, vy + h_total*s/2 - FOND_H*s/2,
-              f'FOND\n{FOND_H:.0f}', 6)
+        # Key Z boundaries
+        fond_mid_z = FOND_H / 2                    # center of FOND
+        pli1_z = FOND_H                            # bend 1 (horizontal, fond-plat)
+        plat_mid_z = plat_bottom + plat_depth / 2  # center of PLAT
+        plat_top_z = plat_bottom + plat_depth      # top of plat
 
-        # PLAT: section du haut (Z = plat_bottom a plat_bottom+plat_depth)
-        annot('Plat', vx - w*s/2 - 15, vy + h_total*s/2 - plat_bottom*s - plat_depth*s/2,
-              f'PLAT\n{plat_depth:.0f}', 6)
+        # Page X edges of the fond/plat rectangle
+        left_x = vx - w * s / 2
+        right_x = vx + w * s / 2
 
-        # COTE: section laterale
+        # COTE extends from the plat laterally
         if cote_side == 'right':
-            annot('Cote', vx + (w/2 + BA + cote_h/2)*s,
-                  vy + h_total*s/2 - plat_bottom*s - plat_depth*s/2,
-                  f'COTE\n{cote_h:.0f}', 6)
+            cote_center_x = vx + (w / 2 + BA + cote_h / 2) * s
         else:
-            annot('Cote', vx - (w/2 + BA + cote_h/2)*s,
-                  vy + h_total*s/2 - plat_bottom*s - plat_depth*s/2,
-                  f'COTE\n{cote_h:.0f}', 6)
+            cote_center_x = vx - (w / 2 + BA + cote_h / 2) * s
 
-        # Plis
-        annot('Pli1', vx + w*s/4, vy + h_total*s/2 - FOND_H*s + 4,
-              f'pli 1 (R{BEND_R})', 5)
-        annot('Pli2', vx + w*s/2 + 4, vy + h_total*s/2 - plat_bottom*s - plat_depth*s/3,
-              f'pli 2 (R{BEND_R})', 5)
+        # 1. Titre at top of page
+        annot('Titre', vx, 10, titre, 10)
 
-        # Cotes largeur/hauteur
-        annot('DimW', vx, vy + h_total*s/2 + 10, f'{w:.0f}mm (fond/plat)', 6)
-        annot('DimH', vx + w_total*s/2 + 12, vy, f'{h_total:.0f}mm', 6)
+        # 2. Section labels INSIDE their sections, centered horizontally
+        annot('Fond', vx, z_to_y(fond_mid_z),
+              f'FOND  ({FOND_H:.0f})', 7)
 
-        # Pivots
-        annot('PivA', vx + dx_dessus*s + 14, vy + h_total*s/2 - pz_dessus*s,
+        annot('Plat', vx, z_to_y(plat_mid_z),
+              f'PLAT  ({plat_depth:.0f})', 7)
+
+        annot('Cote', cote_center_x, z_to_y(plat_mid_z),
+              f'COTE\n({cote_h:.0f})', 6)
+
+        # 3. Pli annotations near bend lines, offset to the left margin
+        annot('Pli1', left_x - 18, z_to_y(pli1_z),
+              f'<- pli 1 (R{BEND_R})', 5)
+
+        # Pli2 is vertical (along Z) at the junction plat/cote
+        # Place annotation above the patron, near the X position of the bend
+        if cote_side == 'right':
+            pli2_x = right_x + BA * s / 2
+        else:
+            pli2_x = left_x - BA * s / 2
+        annot('Pli2', pli2_x, z_to_y(plat_top_z) + 10,
+              f'pli 2\n(R{BEND_R})', 5)
+
+        # 4. Dimension annotations at the margins
+        dimw_y = min(patron_bottom_y + 10, 190)
+        annot('DimW', vx, dimw_y,
+              f'Largeur: {w:.0f}mm', 6)
+        annot('DimH', right_x + 20, vy,
+              f'Hauteur:\n{h_total:.0f}mm', 6)
+
+        # 5. Pivot labels to the right of the holes, with offset
+        piv_label_x = right_x + 20
+        piv_a_y = z_to_y(pz_dessus)
+        piv_b_y = z_to_y(pz_dessous)
+        # Ensure pivots labels don't overlap each other (min 12mm apart)
+        if abs(piv_a_y - piv_b_y) < 12:
+            mid_piv_y = (piv_a_y + piv_b_y) / 2
+            piv_a_y = mid_piv_y - 7
+            piv_b_y = mid_piv_y + 7
+        # Ensure pivot labels don't overlap DimH (at vy)
+        if abs(piv_a_y - vy) < 12:
+            piv_label_x = right_x + 40
+        annot('PivA', piv_label_x, piv_a_y,
               f'D{AXE_HOLE} dessus', 5)
-        annot('PivB', vx + dx_dessous*s + 14, vy + h_total*s/2 - pz_dessous*s,
+        annot('PivB', piv_label_x, piv_b_y,
               f'D{AXE_HOLE} dessous', 5)
 
-        # Entraxe + specs
-        annot('Entraxe', vx, vy - h_total*s/2 - 8,
-              f'Entraxe: {entraxe_x:.0f} x {entraxe_z:.0f}mm', 6)
-        annot('Specs', vx, vy - h_total*s/2 - 18,
-              f'Tole {TOLE}mm | 2 plis R{BEND_R} | 1 soudure | x2', 5)
+        # 6. Specs at the very bottom of the page
+        # Clamp positions to stay within page (A4 landscape: 210mm height)
+        specs_y = min(patron_bottom_y + 8, 198)
+        annot('Specs', vx, specs_y,
+              f'Entraxe {entraxe_x:.0f}x{entraxe_z:.0f} | '
+              f'Tole {TOLE}mm | 2xR{BEND_R} | 1 soudure | x2', 5)
 
         if HAS_GUI:
             patron.ViewObject.Visibility = False
