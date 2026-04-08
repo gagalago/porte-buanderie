@@ -474,10 +474,10 @@ try:
     def make_patron_page(page_name, titre, tpl_name,
                          depth_dessus, depth_dessous, dx_dessus, dx_dessous,
                          cote_side):
-        """Cree une page TechDraw A4 pour un patron deplie en L avec cotes."""
+        """Cree une page TechDraw A3 pour un patron deplie en L avec cotes."""
         pg = doc.addObject('TechDraw::DrawPage', page_name)
         tp = doc.addObject('TechDraw::DrawSVGTemplate', tpl_name)
-        tp.Template = '/usr/share/freecad/Mod/TechDraw/Templates/ISO/A4_Landscape_blank.svg'
+        tp.Template = '/usr/share/freecad/Mod/TechDraw/Templates/ISO/A3_Landscape_blank.svg'
         pg.Template = tp
 
         # Creer le patron (forme en L)
@@ -497,40 +497,107 @@ try:
         max_depth = max(depth_dessus, depth_dessous)
         plat_depth = max_depth + PIVOT_MARGIN + AXE_HOLE/2
         cote_h = min(FOND_H * 0.6, 100)
-        h_total = FOND_H + BA + plat_depth  # hauteur totale en Z
-        if cote_side == 'right':
-            w_total = w + BA + cote_h
-        else:
-            w_total = w + BA + cote_h
-        entraxe_x = abs(dx_dessus - dx_dessous)
-        plat_bottom = FOND_H + BA
-        pz_dessus = plat_bottom + TOLE + max(depth_dessus, 20)
-        pz_dessous = plat_bottom + TOLE + max(depth_dessous, 20)
-        entraxe_z = abs(pz_dessus - pz_dessous)
+        h_total = FOND_H + BA + plat_depth
+        w_total = w + BA + cote_h
 
-        # Vue de face: patron a gauche, annotations a droite
-        # A4 Landscape = 297 x 210mm
-        scale = min(140.0 / h_total, 140.0 / w_total, 0.45)
+        # Vue de face sur A3 Landscape (420 x 297mm)
+        # Patron a gauche, espace pour cotes a droite et en bas
+        scale = min(200.0 / h_total, 200.0 / w_total, 0.55)
         vue = doc.addObject('TechDraw::DrawViewPart', f'Vue_{page_name}')
         vue.Source = [patron]
         vue.Direction = App.Vector(0, -1, 0)
         vue.XDirection = App.Vector(1, 0, 0)
         vue.Scale = scale
-        vue.X = 90   # vue decalee a gauche
-        vue.Y = 110  # centree verticalement
+        vue.X = 130
+        vue.Y = 155
         pg.addView(vue)
         doc.recompute()
 
-        # --- Annotations: titre seul (cotes dans le tableau SVG) ---
+        # --- Titre ---
         a = doc.addObject('TechDraw::DrawViewAnnotation', f'Titre_{page_name}')
-        a.Text = [titre]
-        a.TextSize = 8
-        a.X = 90; a.Y = 15
+        a.Text = [titre]; a.TextSize = 10; a.X = 130; a.Y = 20
         pg.addView(a)
+
+        # --- Cotes auto via edges ---
+        # Apres recompute, explorer les edges de la vue projetee
+        # et trouver ceux qui correspondent aux contours exterieurs et trous
+        try:
+            add_auto_dimensions(doc, pg, vue, page_name, scale,
+                                w, FOND_H, plat_depth, cote_h, BA,
+                                AXE_HOLE, cote_side)
+        except Exception as e:
+            print(f"    Cotes auto: {e}")
 
         if HAS_GUI:
             patron.ViewObject.Visibility = False
         return pg
+
+    def add_auto_dimensions(doc, page, vue, suffix, scale,
+                            w, fond_h, plat_depth, cote_h, BA,
+                            axe_hole, cote_side):
+        """Ajoute des cotes TechDraw en trouvant les edges de la shape source."""
+        src_shape = vue.Source[0].Shape
+        vert_edges = []
+        horiz_edges = []
+        circles = []
+
+        for i, edge in enumerate(src_shape.Edges):
+            ename = f'Edge{i}'
+            if hasattr(edge.Curve, 'Radius'):
+                circles.append((ename, edge.Curve.Radius))
+                continue
+            if len(edge.Vertexes) < 2:
+                continue
+            v1, v2 = edge.Vertexes[0].Point, edge.Vertexes[1].Point
+            dx, dz = abs(v1.x - v2.x), abs(v1.z - v2.z)
+            if dz < 1 and dx > 10:
+                horiz_edges.append((ename, dx))
+            elif dx < 1 and dz > 10:
+                vert_edges.append((ename, dz))
+
+        dim_n = [0]
+        def add_dim(type_, refs, x_off=0, y_off=15):
+            name = f'Dim{dim_n[0]}_{suffix}'; dim_n[0] += 1
+            d = doc.addObject('TechDraw::DrawViewDimension', name)
+            d.Type = type_
+            d.References2D = [(vue, r) for r in refs]
+            d.FormatSpec = '%.0f'
+            d.X = x_off; d.Y = y_off
+            page.addView(d)
+
+        # Trouver 1 edge par type de dimension
+        found = {}
+        for ename, length in vert_edges:
+            if abs(length - fond_h) < 5 and 'fond_h' not in found:
+                found['fond_h'] = ename
+            elif abs(length - plat_depth) < 5 and 'plat_h' not in found:
+                found['plat_h'] = ename
+        for ename, length in horiz_edges:
+            if abs(length - w) < 5 and 'fond_w' not in found:
+                found['fond_w'] = ename
+            elif abs(length - cote_h) < 3 and 'cote_w' not in found:
+                found['cote_w'] = ename
+        for ename, radius in circles:
+            if abs(radius * 2 - axe_hole) < 2 and 'pivot' not in found:
+                found['pivot'] = ename
+            elif abs(radius * 2 - 12) < 2 and 'fix' not in found:
+                found['fix'] = ename
+
+        # Ajouter les cotes
+        if 'fond_w' in found:
+            add_dim('Distance', [found['fond_w']], 0, 20)
+        if 'fond_h' in found:
+            add_dim('Distance', [found['fond_h']], -25, 0)
+        if 'plat_h' in found:
+            add_dim('Distance', [found['plat_h']], -25, 0)
+        if 'cote_w' in found:
+            add_dim('Distance', [found['cote_w']], 0, 15)
+        if 'pivot' in found:
+            add_dim('Diameter', [found['pivot']], 12, 5)
+        if 'fix' in found:
+            add_dim('Diameter', [found['fix']], 12, 5)
+
+        print(f"    Cotes: {len(found)} trouvees ({', '.join(found.keys())})")
 
     # === Page 3: Patron murale ===
     make_patron_page('Plan_Patron_Murale', 'PLATINE MURALE (x2)',
