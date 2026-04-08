@@ -171,19 +171,29 @@ def make_patron_plat(depth_dessus, depth_dessous, dx_dessus, dx_dessous,
                      cote_side='right'):
     """
     Patron a plat (mise a plat / depliage) de la platine combinee.
-    Les 3 faces sont depliees dans le plan XY:
+    Forme en L: le cote se deplie lateralement depuis le bord du plat.
 
-        Y=0                                                      Y=total
-        +----FOND (150mm)----+--BA--+----PLAT (~185mm)----+--BA--+--COTE--+
-        |                    |      |                     |      |        |
-        |  (vis holes)       |      |  [A]   [B] pivots   |      |        |
-        |                    |      |                     |      |        |
-        +--------------------+------+---------------------+------+--------+
+    Vue de dessus du patron (plan XZ, epaisseur TOLE en Y):
 
-    BA = bend allowance (tolerance de pliage ~8mm pour R=3, t=5, K=0.44)
-    Les lignes de pliage sont a Y=FOND_H et Y=FOND_H+BA+plat_depth.
+    Pour cote_side='right':
 
-    Retourne (shape, bend_line_y1, bend_line_y2) pour le marquage.
+        x_min     x_max  x_max+BA+cote_h
+          |         |         |
+          +---------+         |   Z = FOND_H + BA + plat_depth
+          |  PLAT   +---------+
+          | (pivots)|  COTE   |   pli 2 (vertical, le long de Z)
+          |         +---------+
+          +--pli 1--+             Z = FOND_H
+          |         |
+          |  FOND   |
+          |  (vis)  |
+          +---------+             Z = 0
+
+    BA = bend allowance (~8mm pour R=3, t=5, K=0.44)
+    Pli 1: horizontal (le long de X), entre fond et plat
+    Pli 2: vertical (le long de Y/Z), entre plat et cote
+
+    Retourne (shape, bend1_z, bend2_x).
     """
     t = TOLE; margin = 40; BEND_R = 3; K_FACTOR = 0.44
 
@@ -195,41 +205,66 @@ def make_patron_plat(depth_dessus, depth_dessous, dx_dessus, dx_dessous,
     plat_depth = max_depth + PIVOT_MARGIN + AXE_HOLE/2
     cote_h = min(FOND_H * 0.6, 100)
 
-    # Bend allowance pour pli 90 deg
     BA = (math.pi / 2) * (BEND_R + K_FACTOR * t)  # ~8.2mm
 
-    # Positions Y des sections dans le patron
-    fond_start = 0
-    fond_end = FOND_H
-    bend1_center = fond_end + BA / 2
-    plat_start = fond_end + BA
-    plat_end = plat_start + plat_depth
-    bend2_center = plat_end + BA / 2
-    cote_start = plat_end + BA
-    cote_end = cote_start + cote_h
+    # Positions Z des sections (fond en bas, plat au-dessus)
+    fond_bottom = 0
+    fond_top = FOND_H
+    bend1_z = fond_top + BA / 2
+    plat_bottom = fond_top + BA
+    plat_top = plat_bottom + plat_depth
 
-    # Shape: plaque plate complete
-    shape = Part.makeBox(w, cote_end, t, App.Vector(x_min, 0, 0))
+    # Position X du cote (deplie lateralement)
+    if cote_side == 'right':
+        cote_x_start = x_max + BA
+        cote_x_end = cote_x_start + cote_h
+    else:
+        cote_x_end = x_min - BA
+        cote_x_start = cote_x_end - cote_h
 
-    # Trous pivot dans la section plat
-    py_dessus = plat_start + t + max(depth_dessus, 20)
-    py_dessous = plat_start + t + max(depth_dessous, 20)
-    for px, py in [(dx_dessus, py_dessus), (dx_dessous, py_dessous)]:
+    # --- Construire la forme en L ---
+    # FOND: rectangle
+    fond = Part.makeBox(w, t, FOND_H, App.Vector(x_min, 0, fond_bottom))
+    # PLAT: rectangle
+    plat = Part.makeBox(w, t, plat_depth, App.Vector(x_min, 0, plat_bottom))
+    # COTE: rectangle lateral (ne couvre que la hauteur du plat)
+    if cote_side == 'right':
+        cote = Part.makeBox(cote_h + BA, t, plat_depth,
+                             App.Vector(x_max, 0, plat_bottom))
+    else:
+        cote = Part.makeBox(cote_h + BA, t, plat_depth,
+                             App.Vector(x_min - BA - cote_h, 0, plat_bottom))
+
+    shape = fond.fuse(plat).fuse(cote)
+
+    # --- Trous pivot dans la section plat ---
+    pz_dessus = plat_bottom + t + max(depth_dessus, 20)
+    pz_dessous = plat_bottom + t + max(depth_dessous, 20)
+    for px, pz in [(dx_dessus, pz_dessus), (dx_dessous, pz_dessous)]:
         shape = shape.cut(Part.makeCylinder(AXE_HOLE/2, t+20,
-            App.Vector(px, py, -10), App.Vector(0,0,1)))
+            App.Vector(px, -10, pz), App.Vector(0, 1, 0)))
 
-    # Trous fixation dans la section fond
+    # --- Trous fixation dans le fond ---
     for dx in [x_min+25, 0, x_max-25]:
-        for dy in [FOND_H*0.25, FOND_H*0.75]:
+        for dz in [FOND_H*0.25, FOND_H*0.75]:
             shape = shape.cut(Part.makeCylinder(6, t+10,
-                App.Vector(dx, dy, -5), App.Vector(0,0,1)))
+                App.Vector(dx, -5, dz), App.Vector(0, 1, 0)))
 
-    # Lignes de pliage (fines rainures pour les marquer visuellement)
-    for by in [bend1_center, bend2_center]:
-        groove = Part.makeBox(w, 1, t*0.3, App.Vector(x_min, by-0.5, t*0.7))
-        shape = shape.cut(groove)
+    # --- Lignes de pliage (rainures visuelles) ---
+    # Pli 1: horizontal, entre fond et plat (le long de X)
+    shape = shape.cut(Part.makeBox(w, t*0.3, 1,
+        App.Vector(x_min, t*0.7, bend1_z - 0.5)))
+    # Pli 2: vertical, entre plat et cote (le long de Z)
+    if cote_side == 'right':
+        bend2_x = x_max + BA/2
+        shape = shape.cut(Part.makeBox(1, t*0.3, plat_depth,
+            App.Vector(bend2_x - 0.5, t*0.7, plat_bottom)))
+    else:
+        bend2_x = x_min - BA/2
+        shape = shape.cut(Part.makeBox(1, t*0.3, plat_depth,
+            App.Vector(bend2_x - 0.5, t*0.7, plat_bottom)))
 
-    return shape, bend1_center, bend2_center
+    return shape, bend1_z, bend2_x
 
 
 def make_arm_tube(length):
@@ -439,99 +474,105 @@ try:
     def make_patron_page(page_name, titre, tpl_name,
                          depth_dessus, depth_dessous, dx_dessus, dx_dessous,
                          cote_side):
-        """Cree une page TechDraw A4 pour un patron deplie avec cotes."""
+        """Cree une page TechDraw A4 pour un patron deplie en L avec cotes."""
         pg = doc.addObject('TechDraw::DrawPage', page_name)
         tp = doc.addObject('TechDraw::DrawSVGTemplate', tpl_name)
         tp.Template = '/usr/share/freecad/Mod/TechDraw/Templates/ISO/A4_Landscape_blank.svg'
         pg.Template = tp
 
-        # Creer le patron
+        # Creer le patron (forme en L)
         patron = doc.addObject('Part::Feature', f'Patron_{page_name}')
-        shape, b1, b2 = make_patron_plat(
+        shape, b1_z, b2_x = make_patron_plat(
             depth_dessus, depth_dessous, dx_dessus, dx_dessous, cote_side)
         patron.Shape = shape
         patron.Placement = App.Placement(
             App.Vector(-600, -400 - len(doc.Objects)*10, 0), App.Rotation())
 
-        # Dimensions du patron
-        margin = 40; t = TOLE; BEND_R = 3; K_FACTOR = 0.44
-        BA = (math.pi/2) * (BEND_R + K_FACTOR * t)
+        # Calculs dimensions
+        margin = 40; BEND_R = 3; K_FACTOR = 0.44
+        BA = (math.pi/2) * (BEND_R + K_FACTOR * TOLE)
         x_min = min(dx_dessus, dx_dessous) - margin
         x_max = max(dx_dessus, dx_dessous) + margin
         w = x_max - x_min
         max_depth = max(depth_dessus, depth_dessous)
         plat_depth = max_depth + PIVOT_MARGIN + AXE_HOLE/2
         cote_h = min(FOND_H * 0.6, 100)
-        total_l = FOND_H + BA + plat_depth + BA + cote_h
+        h_total = FOND_H + BA + plat_depth  # hauteur totale en Z
+        if cote_side == 'right':
+            w_total = w + BA + cote_h
+        else:
+            w_total = w + BA + cote_h
         entraxe_x = abs(dx_dessus - dx_dessous)
-        plat_start = FOND_H + BA
-        py_dessus = plat_start + t + max(depth_dessus, 20)
-        py_dessous = plat_start + t + max(depth_dessous, 20)
-        entraxe_y = abs(py_dessus - py_dessous)
+        plat_bottom = FOND_H + BA
+        pz_dessus = plat_bottom + TOLE + max(depth_dessus, 20)
+        pz_dessous = plat_bottom + TOLE + max(depth_dessous, 20)
+        entraxe_z = abs(pz_dessus - pz_dessous)
 
-        # Vue de dessus du patron (echelle pour tenir en A4 landscape)
-        scale = min(250.0 / total_l, 180.0 / w, 0.8)
+        # Vue de face (direction -Y, on voit le plan XZ = la forme en L)
+        scale = min(180.0 / h_total, 220.0 / w_total, 0.7)
         vue = doc.addObject('TechDraw::DrawViewPart', f'Vue_{page_name}')
         vue.Source = [patron]
-        vue.Direction = App.Vector(0, 0, -1)
+        vue.Direction = App.Vector(0, -1, 0)
         vue.XDirection = App.Vector(1, 0, 0)
         vue.Scale = scale
-        vue.X = 148; vue.Y = 110
+        vue.X = 148; vue.Y = 105
         pg.addView(vue)
-
         doc.recompute()
 
-        # Annotations de cotes
+        # --- Annotations ---
         def annot(name, x, y, text, size=7):
             a = doc.addObject('TechDraw::DrawViewAnnotation', f'{name}_{page_name}')
             a.Text = [text]; a.TextSize = size; a.X = x; a.Y = y
             pg.addView(a)
 
-        vx, vy = 148, 110
+        vx, vy = 148, 105
         s = scale
 
         # Titre
-        annot('Titre', vx, vy + total_l*s/2 + 18, titre, 10)
+        annot('Titre', vx, 15, titre, 10)
 
-        # Largeur
-        annot('CoteW', vx, vy + total_l*s/2 + 8, f'{w:.0f}mm')
+        # FOND: section du bas (Z = 0 a FOND_H)
+        annot('Fond', vx - w*s/2 - 15, vy + h_total*s/2 - FOND_H*s/2,
+              f'FOND\n{FOND_H:.0f}', 6)
 
-        # Sections a gauche
-        lx = vx - w*s/2 - 18
-        annot('Fond', lx, vy + total_l*s/2 - FOND_H*s/2,
-              f'FOND {FOND_H:.0f}', 6)
-        annot('Plat', lx, vy + total_l*s/2 - (FOND_H+BA)*s - plat_depth*s/2,
-              f'PLAT {plat_depth:.0f}', 6)
-        annot('Cote', lx, vy - total_l*s/2 + cote_h*s/2,
-              f'COTE {cote_h:.0f}', 6)
+        # PLAT: section du haut (Z = plat_bottom a plat_bottom+plat_depth)
+        annot('Plat', vx - w*s/2 - 15, vy + h_total*s/2 - plat_bottom*s - plat_depth*s/2,
+              f'PLAT\n{plat_depth:.0f}', 6)
 
-        # Longueur a droite
-        annot('CoteL', vx + w*s/2 + 15, vy, f'{total_l:.0f}mm\ntotal', 6)
+        # COTE: section laterale
+        if cote_side == 'right':
+            annot('Cote', vx + (w/2 + BA + cote_h/2)*s,
+                  vy + h_total*s/2 - plat_bottom*s - plat_depth*s/2,
+                  f'COTE\n{cote_h:.0f}', 6)
+        else:
+            annot('Cote', vx - (w/2 + BA + cote_h/2)*s,
+                  vy + h_total*s/2 - plat_bottom*s - plat_depth*s/2,
+                  f'COTE\n{cote_h:.0f}', 6)
 
         # Plis
-        annot('Pli1', vx + w*s/4, vy + total_l*s/2 - FOND_H*s,
-              f'pli 90deg R{BEND_R}', 5)
-        annot('Pli2', vx + w*s/4, vy + total_l*s/2 - (FOND_H+BA+plat_depth)*s,
-              f'pli 90deg R{BEND_R}', 5)
+        annot('Pli1', vx + w*s/4, vy + h_total*s/2 - FOND_H*s + 4,
+              f'pli 1 (R{BEND_R})', 5)
+        annot('Pli2', vx + w*s/2 + 4, vy + h_total*s/2 - plat_bottom*s - plat_depth*s/3,
+              f'pli 2 (R{BEND_R})', 5)
+
+        # Cotes largeur/hauteur
+        annot('DimW', vx, vy + h_total*s/2 + 10, f'{w:.0f}mm (fond/plat)', 6)
+        annot('DimH', vx + w_total*s/2 + 12, vy, f'{h_total:.0f}mm', 6)
 
         # Pivots
-        annot('PivDessus', vx + dx_dessus*s + 12,
-              vy + total_l*s/2 - py_dessus*s,
+        annot('PivA', vx + dx_dessus*s + 14, vy + h_total*s/2 - pz_dessus*s,
               f'D{AXE_HOLE} dessus', 5)
-        annot('PivDessous', vx + dx_dessous*s + 12,
-              vy + total_l*s/2 - py_dessous*s,
+        annot('PivB', vx + dx_dessous*s + 14, vy + h_total*s/2 - pz_dessous*s,
               f'D{AXE_HOLE} dessous', 5)
 
         # Entraxe + specs
-        annot('Entraxe', vx, vy - total_l*s/2 - 8,
-              f'Entraxe pivots: {entraxe_x:.0f} x {entraxe_y:.0f}mm', 6)
-        annot('Specs', vx, vy - total_l*s/2 - 18,
-              f'Tole acier {TOLE}mm | 2 plis R{BEND_R} | 1 soudure | x2', 5)
+        annot('Entraxe', vx, vy - h_total*s/2 - 8,
+              f'Entraxe: {entraxe_x:.0f} x {entraxe_z:.0f}mm', 6)
+        annot('Specs', vx, vy - h_total*s/2 - 18,
+              f'Tole {TOLE}mm | 2 plis R{BEND_R} | 1 soudure | x2', 5)
 
-        # Cacher patron dans la vue 3D
         if HAS_GUI:
             patron.ViewObject.Visibility = False
-
         return pg
 
     # === Page 3: Patron murale ===
