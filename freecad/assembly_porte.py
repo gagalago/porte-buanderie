@@ -138,10 +138,21 @@ def make_platine_combinee(depth_dessus, depth_dessous, dx_dessus, dx_dessous,
     shapes.append(Part.makeBox(w, t, FOND_H, App.Vector(x_min, 0, z_bottom)))
     # PLAT (au sommet du fond)
     shapes.append(Part.makeBox(w, plat_depth, t, App.Vector(x_min, t, z_top - t)))
-    # COTE (bord oppose aux bras)
-    cote_x = (x_max - t) if cote_side == 'right' else x_min
-    shapes.append(Part.makeBox(t, plat_depth, cote_h,
-                                App.Vector(cote_x, t, z_top - t - cote_h)))
+    # COTE triangulaire (gousset, bord oppose aux bras)
+    # Triangle: de (y=t, z=z_top-t) en haut a (y=t+plat_depth, z=z_top-t-cote_h) en bas
+    if cote_side == 'right':
+        cote_x = x_max - t
+    else:
+        cote_x = x_min
+    tri_pts = [
+        App.Vector(cote_x, t, z_top - t),
+        App.Vector(cote_x, t + plat_depth, z_top - t),
+        App.Vector(cote_x, t, z_top - t - cote_h),
+        App.Vector(cote_x, t, z_top - t),  # fermer
+    ]
+    tri_wire = Part.makePolygon(tri_pts)
+    tri_face = Part.Face(tri_wire)
+    shapes.append(tri_face.extrude(App.Vector(t, 0, 0)))
 
     # BOULONS integres
     axe_l = TOLE + TUBE_H + 15
@@ -167,35 +178,33 @@ def make_platine_combinee(depth_dessus, depth_dessous, dx_dessus, dx_dessous,
     return result
 
 
+BEND_R = 3        # rayon de pliage
+K_FACTOR = 0.44
+BA = (math.pi / 2) * (BEND_R + K_FACTOR * TOLE)  # ~8.2mm bend allowance
+FILLET_R = 3      # rayon des coins arrondis (laser-friendly)
+
 def make_patron_plat(depth_dessus, depth_dessous, dx_dessus, dx_dessous,
                      cote_side='right'):
     """
-    Patron a plat (mise a plat / depliage) de la platine combinee.
-    Forme en L: le cote se deplie lateralement depuis le bord du plat.
-
-    Vue de dessus du patron (plan XZ, epaisseur TOLE en Y):
+    Patron a plat pour decoupe laser. Cote TRIANGULAIRE + coins arrondis.
 
     Pour cote_side='right':
 
-        x_min     x_max  x_max+BA+cote_h
-          |         |         |
-          +---------+         |   Z = FOND_H + BA + plat_depth
-          |  PLAT   +---------+
-          | (pivots)|  COTE   |   pli 2 (vertical, le long de Z)
-          |         +---------+
+        x_min     x_max
+          |         |
+          +---------+              Z = plat_top
+          |  PLAT   +--__
+          | (pivots)|    --__      triangle (gousset)
+          |         |        --+   Z = plat_bottom + pli 2
           +--pli 1--+             Z = FOND_H
           |         |
           |  FOND   |
           |  (vis)  |
           +---------+             Z = 0
 
-    BA = bend allowance (~8mm pour R=3, t=5, K=0.44)
-    Pli 1: horizontal (le long de X), entre fond et plat
-    Pli 2: vertical (le long de Y/Z), entre plat et cote
-
-    Retourne (shape, bend1_z, bend2_x).
+    Coins exterieurs arrondis (R=3mm) pour securite et laser.
     """
-    t = TOLE; margin = 40; BEND_R = 3; K_FACTOR = 0.44
+    t = TOLE; margin = 40
 
     x_min = min(dx_dessus, dx_dessous) - margin
     x_max = max(dx_dessus, dx_dessous) + margin
@@ -205,37 +214,72 @@ def make_patron_plat(depth_dessus, depth_dessous, dx_dessus, dx_dessous,
     plat_depth = max_depth + PIVOT_MARGIN + AXE_HOLE/2
     cote_h = min(FOND_H * 0.6, 100)
 
-    BA = (math.pi / 2) * (BEND_R + K_FACTOR * t)  # ~8.2mm
-
-    # Positions Z des sections (fond en bas, plat au-dessus)
+    # Positions Z
     fond_bottom = 0
     fond_top = FOND_H
-    bend1_z = fond_top + BA / 2
     plat_bottom = fond_top + BA
     plat_top = plat_bottom + plat_depth
 
-    # Position X du cote (deplie lateralement)
-    if cote_side == 'right':
-        cote_x_start = x_max + BA
-        cote_x_end = cote_x_start + cote_h
-    else:
-        cote_x_end = x_min - BA
-        cote_x_start = cote_x_end - cote_h
+    # Contour 2D du patron (dans le plan XZ, extrudé en Y par TOLE)
+    # Le cote est un TRIANGLE au lieu d'un rectangle
+    pts = []
 
-    # --- Construire la forme en L ---
-    # FOND: rectangle
-    fond = Part.makeBox(w, t, FOND_H, App.Vector(x_min, 0, fond_bottom))
-    # PLAT: rectangle
-    plat = Part.makeBox(w, t, plat_depth, App.Vector(x_min, 0, plat_bottom))
-    # COTE: rectangle lateral (ne couvre que la hauteur du plat)
     if cote_side == 'right':
-        cote = Part.makeBox(cote_h + BA, t, plat_depth,
-                             App.Vector(x_max, 0, plat_bottom))
-    else:
-        cote = Part.makeBox(cote_h + BA, t, plat_depth,
-                             App.Vector(x_min - BA - cote_h, 0, plat_bottom))
+        bend2_x = x_max + BA/2
+        cote_tip_x = x_max + BA + cote_h  # pointe du triangle
 
-    shape = fond.fuse(plat).fuse(cote)
+        pts = [
+            # Fond (rectangle, bas)
+            App.Vector(x_min, 0, fond_bottom),
+            App.Vector(x_max, 0, fond_bottom),
+            App.Vector(x_max, 0, fond_top),
+            # Zone BA pli 1 (on la traverse)
+            App.Vector(x_max, 0, plat_bottom),
+            # Plat + triangle cote
+            App.Vector(cote_tip_x, 0, plat_bottom),  # pointe basse du triangle
+            App.Vector(x_max + BA, 0, plat_top),      # coin haut du triangle (= bord plat + BA)
+            App.Vector(x_min, 0, plat_top),            # coin haut gauche du plat
+            App.Vector(x_min, 0, plat_bottom),
+            # Zone BA pli 1
+            App.Vector(x_min, 0, fond_top),
+            App.Vector(x_min, 0, fond_bottom),         # fermer
+        ]
+    else:
+        bend2_x = x_min - BA/2
+        cote_tip_x = x_min - BA - cote_h
+
+        pts = [
+            # Fond (rectangle, bas)
+            App.Vector(x_min, 0, fond_bottom),
+            App.Vector(x_max, 0, fond_bottom),
+            App.Vector(x_max, 0, fond_top),
+            App.Vector(x_max, 0, plat_bottom),
+            App.Vector(x_max, 0, plat_top),
+            # Plat + triangle cote a gauche
+            App.Vector(x_min - BA, 0, plat_top),       # coin haut gauche (bord plat - BA)
+            App.Vector(cote_tip_x, 0, plat_bottom),    # pointe basse du triangle
+            App.Vector(x_min, 0, plat_bottom),
+            App.Vector(x_min, 0, fond_top),
+            App.Vector(x_min, 0, fond_bottom),          # fermer
+        ]
+
+    # Creer le Wire et la Face
+    wire = Part.makePolygon(pts + [pts[0]])  # fermer le polygone
+    face = Part.Face(wire)
+
+    # Arrondir les coins exterieurs
+    shape = face.extrude(App.Vector(0, t, 0))
+    try:
+        # Fillet sur tous les edges verticaux (paralleles a Y = epaisseur)
+        edges_to_fillet = []
+        for i, edge in enumerate(shape.Edges):
+            if edge.Length > t * 0.8 and edge.Length < t * 1.2:
+                # C'est un edge d'epaisseur (parallele a Y)
+                edges_to_fillet.append(edge)
+        if edges_to_fillet:
+            shape = shape.makeFillet(FILLET_R, edges_to_fillet)
+    except:
+        pass  # si le fillet echoue, garder les coins vifs
 
     # --- Trous pivot dans la section plat ---
     pz_dessus = plat_bottom + t + max(depth_dessus, 20)
@@ -250,21 +294,11 @@ def make_patron_plat(depth_dessus, depth_dessous, dx_dessus, dx_dessous,
             shape = shape.cut(Part.makeCylinder(6, t+10,
                 App.Vector(dx, -5, dz), App.Vector(0, 1, 0)))
 
-    # --- Lignes de pliage (rainures visuelles) ---
-    # Pli 1: horizontal, entre fond et plat (le long de X)
+    # --- Rainures de pliage (visuelles, mi-profondeur) ---
     shape = shape.cut(Part.makeBox(w, t*0.3, 1,
-        App.Vector(x_min, t*0.7, bend1_z - 0.5)))
-    # Pli 2: vertical, entre plat et cote (le long de Z)
-    if cote_side == 'right':
-        bend2_x = x_max + BA/2
-        shape = shape.cut(Part.makeBox(1, t*0.3, plat_depth,
-            App.Vector(bend2_x - 0.5, t*0.7, plat_bottom)))
-    else:
-        bend2_x = x_min - BA/2
-        shape = shape.cut(Part.makeBox(1, t*0.3, plat_depth,
-            App.Vector(bend2_x - 0.5, t*0.7, plat_bottom)))
+        App.Vector(x_min, t*0.7, fond_top + BA/2 - 0.5)))
 
-    return shape, bend1_z, bend2_x
+    return shape, fond_top + BA/2, bend2_x
 
 
 ARM_EXTEND = 20  # depassement du tube au-dela de chaque pivot (mm)
@@ -676,3 +710,13 @@ print(f"  Platine porte  (a+b): pivots a {DEPTH_a:.0f}mm et {DEPTH_b:.0f}mm de l
 print(f"  Bras: tube {TUBE_W}x{TUBE_H}x{TUBE_T} perce D{AXE_HOLE}")
 print(f"  TechDraw: 2 pages (Plan_Assembly + Plan_Platine)")
 print(f"  goto(50) / animate() / stop()")
+
+# --- Export STEP des patrons pour decoupe laser ---
+print("\nExport STEP patrons laser...")
+for name in ['Patron_Plan_Patron_Murale', 'Patron_Plan_Patron_Porte']:
+    obj = doc.getObject(name)
+    if obj and obj.Shape.isValid():
+        step_name = name.replace('Patron_Plan_Patron_', 'patron_laser_').lower()
+        step_path = os.path.join(save_dir, f'{step_name}.step')
+        Part.export([obj], step_path)
+        print(f"  {step_path}")
