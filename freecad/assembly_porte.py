@@ -42,8 +42,8 @@ DOOR_H = 2040
 C1 = (CADRE_T, 0); C2 = (CADRE_T+TAPER_T, DT)
 C3 = (OW-CADRE_H-TAPER_H, DT); C4 = (OW-CADRE_H, 0)
 
-Ax, Ay = 1246.1, 471.3;  Bx, By = 1188.4, 586.1
-ax_d, ay_d = 664.1, 426.3; bx_d, by_d = 766.2, 540.6
+Ax, Ay = 1241.2, 482.3;  Bx, By = 1197.4, 570.1
+ax_d, ay_d = 589.9, 463.9; bx_d, by_d = 701.7, 549.2
 SWEEP = 0.55
 
 L1 = math.sqrt((Ax-ax_d)**2+(Ay-ay_d)**2)

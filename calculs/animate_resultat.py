@@ -21,10 +21,10 @@ from optimisation_documentee import (
 )
 
 # --- Parametres du meilleur resultat (coller depuis la sortie de l'optimisation) ---
-Ax, Ay = 1246.1, 471.3
-Bx, By = 1188.4, 586.1
-ax_d, ay_d = 664.1, 426.3
-bx_d, by_d = 766.2, 540.6
+Ax, Ay = 1241.2, 482.3
+Bx, By = 1197.4, 570.1
+ax_d, ay_d = 589.9, 463.9
+bx_d, by_d = 701.7, 549.2
 SWEEP = 0.55
 
 a_loc = np.array([ax_d, ay_d])

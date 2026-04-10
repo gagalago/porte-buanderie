@@ -20,8 +20,8 @@ from SheetMetalNewUnfolder import getUnfold, BendAllowanceCalculator
 # =============================================================================
 TOLE = 5; BEND_R = 3; AXE_HOLE = 18; FOND_H = 150; PIVOT_MARGIN = 15
 
-Ax, Ay = 1246.1, 471.3; Bx, By = 1188.4, 586.1
-ax_d, ay_d = 664.1, 426.3; bx_d, by_d = 766.2, 540.6
+Ax, Ay = 1241.2, 482.3; Bx, By = 1197.4, 570.1
+ax_d, ay_d = 589.9, 463.9; bx_d, by_d = 701.7, 549.2
 RWD = 425; DT = 355
 
 DEPTH_A = Ay - RWD; DEPTH_B = By - RWD

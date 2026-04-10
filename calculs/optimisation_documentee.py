@@ -304,6 +304,11 @@ def simuler_mecanisme(Ax, Ay, Bx, By, ax_door, bx_door, ay_door=DT, by_door=DT, 
     a_local = np.array([ax_door, ay_door])
     b_local = np.array([bx_door, by_door])
 
+    # Bornes de la platine porte en coords locales (pour collision check)
+    plat_margin = 40  # marge autour des pivots
+    plat_x_min = min(ax_door, bx_door) - plat_margin
+    plat_x_max = max(ax_door, bx_door) + plat_margin
+
     # Longueur du coupler (distance entre les 2 pivots porte)
     Lc = np.sqrt((bx_door - ax_door)**2 + (by_door - ay_door)**2)
     if Lc < 50:
@@ -412,9 +417,55 @@ def simuler_mecanisme(Ax, Ay, Bx, By, ax_door, bx_door, ay_door=DT, by_door=DT, 
 
                 # Verifier les collisions (sauf step 0 = position fermee)
                 if i > 0:
+                    # 1. Porte vs murs
                     pts_monde = transformer(points, tx, ty, co, si)
                     cl = np.min(verifier_collisions(pts_monde))
                     clearance_min = min(clearance_min, cl)
+
+                    # 2. Bras vs murs lateraux (pas la limite arriere)
+                    # Les bras sont des tubes fins a Z=200 ou Z=1840, ils passent
+                    # au-dessus/dessous du frigo derriere le mur.
+                    # On verifie seulement: x > 0 (mur gauche) et x < OW si y < RWD (mur droit)
+                    for (px_s, py_s, px_e, py_e) in [(Ax, Ay, ax, ay), (Bx, By, bx, by)]:
+                        bdx = px_e - px_s; bdy = py_e - py_s
+                        bl = np.sqrt(bdx*bdx + bdy*bdy)
+                        if bl > 1:
+                            bnx, bny = -bdy/bl, bdx/bl
+                            hw = TUBE_BRAS_W / 2
+                            for t_frac in [0.0, 0.25, 0.5, 0.75, 1.0]:
+                                cx = px_s + t_frac * bdx
+                                cy = py_s + t_frac * bdy
+                                for side in [-hw, 0, hw]:
+                                    bpx = cx + side * bnx
+                                    bpy = cy + side * bny
+                                    # Mur gauche: x > 0 si y < LWD
+                                    if bpy < LWD:
+                                        clearance_min = min(clearance_min, bpx)
+                                    # Mur droit: x < OW si y < RWD
+                                    if bpy < RWD:
+                                        clearance_min = min(clearance_min, OW - bpx)
+                                    # PAS de verif limite arriere pour les bras
+
+                    # 3. Platine porte vs murs LATERAUX seulement
+                    # La platine est fine (5mm tole), elle passe au-dessus du frigo
+                    # comme les bras. Seule la porte (355mm) bloque l'espace arriere.
+                    plat_pts_local = np.array([
+                        [plat_x_min, DT], [plat_x_max, DT],
+                        [plat_x_min, ay_door], [plat_x_max, ay_door],
+                        [plat_x_min, by_door], [plat_x_max, by_door],
+                        [ax_door, ay_door], [bx_door, by_door],
+                    ])
+                    plat_pts_monde = transformer(plat_pts_local, tx, ty, co, si)
+                    plat_x = plat_pts_monde[:, 0]
+                    plat_y = plat_pts_monde[:, 1]
+                    # Mur gauche
+                    mask_g = plat_y < LWD
+                    if np.any(mask_g):
+                        clearance_min = min(clearance_min, np.min(plat_x[mask_g]))
+                    # Mur droit (retour dans l'ouverture)
+                    mask_d = plat_y < RWD
+                    if np.any(mask_d):
+                        clearance_min = min(clearance_min, np.min(OW - plat_x[mask_d]))
 
             if not ok:
                 continue
