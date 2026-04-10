@@ -331,12 +331,21 @@ mur_g.Shape = Part.makeBox(300, LWD, DOOR_H+200, App.Vector(-300, 0, -100))
 mur_d = asm.newObject('Part::Feature', 'MurDroit')
 mur_d.Shape = Part.makeBox(SBR+50, RWD, DOOR_H+200, App.Vector(OW, 0, -100))
 
+# Cadres = habillage decoratif cote cuisine (comme des plinthes)
+# Sur la face du mur cote cuisine (y<0), recouvrent le bord de l'ouverture
+CADRE_EP = 12  # epaisseur (profondeur vers cuisine)
 if CADRE_T > 0:
     cadre_g = asm.newObject('Part::Feature', 'CadreGauche')
-    cadre_g.Shape = Part.makeBox(CADRE_T, DT, DOOR_H)
+    cadre_g.Shape = Part.makeBox(CADRE_T, CADRE_EP, DOOR_H,
+                                  App.Vector(-CADRE_T, -CADRE_EP, 0))
 if CADRE_H > 0:
     cadre_d = asm.newObject('Part::Feature', 'CadreDroit')
-    cadre_d.Shape = Part.makeBox(CADRE_H, DT, DOOR_H, App.Vector(OW-CADRE_H, 0, 0))
+    cadre_d.Shape = Part.makeBox(CADRE_H, CADRE_EP, DOOR_H,
+                                  App.Vector(OW, -CADRE_EP, 0))
+# Traverse haute
+cadre_h = asm.newObject('Part::Feature', 'CadreHaut')
+cadre_h.Shape = Part.makeBox(OW + CADRE_T + CADRE_H, CADRE_EP, CADRE_T,
+                              App.Vector(-CADRE_T, -CADRE_EP, DOOR_H))
 
 # --- Porte ---
 print("  Porte...")
@@ -631,8 +640,9 @@ def sc(obj, r, g, b, tr=0):
         obj.ViewObject.ShapeColor = (r,g,b); obj.ViewObject.Transparency = tr
 
 sc(mur_g, .75,.75,.75); sc(mur_d, .75,.75,.75)
-if CADRE_T>0: sc(cadre_g, .55,.43,.39, 20)
-if CADRE_H>0: sc(cadre_d, .55,.43,.39, 20)
+if CADRE_T>0: sc(cadre_g, .55,.43,.39, 0)
+if CADRE_H>0: sc(cadre_d, .55,.43,.39, 0)
+sc(cadre_h, .55,.43,.39, 0)
 sc(porte, .4,.73,.42, 30)
 for m in mechanisms:
     sc(m['pm'], .6,.6,.65); sc(m['pp'], .7,.55,.35)
