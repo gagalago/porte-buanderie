@@ -267,12 +267,18 @@ def make_patron_plat(depth_dessus, depth_dessous, dx_dessus, dx_dessous,
     return shape, bend1_z, bend2_x
 
 
+ARM_EXTEND = 20  # depassement du tube au-dela de chaque pivot (mm)
+
 def make_arm_tube(length):
-    """Tube rect 40x25x3 perce D18 aux extremites."""
-    w,h,t = TUBE_W, TUBE_H, TUBE_T
-    outer = Part.makeBox(length, w, h, App.Vector(0, -w/2, -h/2))
-    inner = Part.makeBox(length, w-2*t, h-2*t, App.Vector(0, -w/2+t, -h/2+t))
+    """Tube rect 40x25x3 perce D18.
+    Le tube depasse de ARM_EXTEND au-dela de chaque pivot
+    pour avoir de la matiere autour des trous."""
+    w, h, t = TUBE_W, TUBE_H, TUBE_T
+    total = length + 2 * ARM_EXTEND  # longueur totale du tube
+    outer = Part.makeBox(total, w, h, App.Vector(-ARM_EXTEND, -w/2, -h/2))
+    inner = Part.makeBox(total, w-2*t, h-2*t, App.Vector(-ARM_EXTEND, -w/2+t, -h/2+t))
     tube = outer.cut(inner)
+    # Trous pivot a x=0 (pivot mur) et x=length (pivot porte)
     for x in [0, length]:
         tube = tube.cut(Part.makeCylinder(AXE_HOLE/2, h+20,
             App.Vector(x, 0, -h/2-10), App.Vector(0,0,1)))

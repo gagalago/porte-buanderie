@@ -426,13 +426,15 @@ def simuler_mecanisme(Ax, Ay, Bx, By, ax_door, bx_door, ay_door=DT, by_door=DT, 
                     # Les bras sont des tubes fins a Z=200 ou Z=1840, ils passent
                     # au-dessus/dessous du frigo derriere le mur.
                     # On verifie seulement: x > 0 (mur gauche) et x < OW si y < RWD (mur droit)
+                    ARM_EXT = 20  # depassement tube au-dela des pivots
                     for (px_s, py_s, px_e, py_e) in [(Ax, Ay, ax, ay), (Bx, By, bx, by)]:
                         bdx = px_e - px_s; bdy = py_e - py_s
                         bl = np.sqrt(bdx*bdx + bdy*bdy)
                         if bl > 1:
                             bnx, bny = -bdy/bl, bdx/bl
                             hw = TUBE_BRAS_W / 2
-                            for t_frac in [0.0, 0.25, 0.5, 0.75, 1.0]:
+                            ext = ARM_EXT / bl  # fraction de depassement
+                            for t_frac in [-ext, 0.0, 0.25, 0.5, 0.75, 1.0, 1.0+ext]:
                                 cx = px_s + t_frac * bdx
                                 cy = py_s + t_frac * bdy
                                 for side in [-hw, 0, hw]:

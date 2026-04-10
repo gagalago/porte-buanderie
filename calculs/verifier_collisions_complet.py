@@ -70,10 +70,12 @@ def verifier_lateral(pts_monde):
     return clearance
 
 
+ARM_EXTEND = 20  # depassement du tube au-dela de chaque pivot
+
 def points_bras(px_start, py_start, px_end, py_end, n_along=20, n_across=3):
     """Genere des points le long d'un bras (tube de largeur TUBE_W).
-    Le bras va de (px_start, py_start) a (px_end, py_end).
-    On genere des points sur les deux bords du tube."""
+    Le bras va de (px_start, py_start) a (px_end, py_end),
+    avec ARM_EXTEND mm de depassement de chaque cote."""
     dx = px_end - px_start
     dy = py_end - py_start
     length = math.sqrt(dx*dx + dy*dy)
@@ -84,8 +86,9 @@ def points_bras(px_start, py_start, px_end, py_end, n_along=20, n_across=3):
     ux, uy = dx/length, dy/length
     nx, ny = -uy, ux  # normale (perpendiculaire)
 
+    # Depassement: de -ARM_EXTEND a length+ARM_EXTEND
     pts = []
-    for t in np.linspace(0, 1, n_along):
+    for t in np.linspace(-ARM_EXTEND/length, 1 + ARM_EXTEND/length, n_along + 4):
         cx = px_start + t * dx
         cy = py_start + t * dy
         for s in np.linspace(-TUBE_W/2, TUBE_W/2, n_across):
