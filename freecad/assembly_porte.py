@@ -119,186 +119,197 @@ print(f"  {len(ALL_POS)} positions, rot max = {ALL_POS[-1]['angle_deg']:.1f} deg
 # GEOMETRIE
 # =============================================================================
 
-def make_platine_combinee(depth_dessus, depth_dessous, dx_dessus, dx_dessous,
-                          z_mid, cote_side='right'):
-    """Platine combinee pliable: fond + plat (au sommet) + cote (bord du plat)."""
-    t = TOLE; margin = 40
-    x_min = min(dx_dessus, dx_dessous) - margin
-    x_max = max(dx_dessus, dx_dessous) + margin
-    w = x_max - x_min
-    max_depth = max(depth_dessus, depth_dessous)
-    plat_depth = max_depth + PIVOT_MARGIN + AXE_HOLE/2
+BEND_R = 3
+K_FACTOR = 0.44
+BA = (math.pi / 2) * (BEND_R + K_FACTOR * TOLE)  # ~8.2mm
+FILLET_R = 3  # coins arrondis
+
+def platine_params(depth_dessus, depth_dessous, dx_dessus, dx_dessous, cote_side):
+    """SOURCE UNIQUE: calcule toutes les dimensions d'une platine.
+    Utilisee par make_patron_plat() et make_platine_3d()."""
+    margin = 40
+    p = {}
+    p['t'] = TOLE
+    p['x_min'] = min(dx_dessus, dx_dessous) - margin
+    p['x_max'] = max(dx_dessus, dx_dessous) + margin
+    p['w'] = p['x_max'] - p['x_min']
+    p['plat_depth'] = max(depth_dessus, depth_dessous) + PIVOT_MARGIN + AXE_HOLE/2
+    p['cote_h'] = min(FOND_H * 0.6, 100)
+    p['cote_side'] = cote_side
+    # Positions Y des trous pivot (depuis le fond)
+    p['py_dessus'] = TOLE + max(depth_dessus, 20)
+    p['py_dessous'] = TOLE + max(depth_dessous, 20)
+    p['dx_dessus'] = dx_dessus
+    p['dx_dessous'] = dx_dessous
+    # Trous fixation
+    p['fix_xs'] = [p['x_min']+25, 0, p['x_max']-25]
+    p['fix_zs_rel'] = [FOND_H*0.25, FOND_H*0.75]  # relatif au bas du fond
+    return p
+
+
+def _platine_contour_2d(p):
+    """Contour 2D du patron (plan XZ). Cote triangulaire.
+    Retourne la liste de points et les positions des plis."""
+    x_min, x_max = p['x_min'], p['x_max']
+    plat_depth, cote_h = p['plat_depth'], p['cote_h']
+    fond_top = FOND_H
+    plat_bottom = fond_top + BA
+    plat_top = plat_bottom + plat_depth
+
+    if p['cote_side'] == 'right':
+        cote_tip_x = x_max + BA + cote_h
+        pts = [
+            (x_min, 0), (x_max, 0),                      # fond bas
+            (x_max, fond_top), (x_max, plat_bottom),      # fond haut + BA
+            (cote_tip_x, plat_bottom),                     # pointe triangle
+            (x_max + BA, plat_top),                        # coin haut triangle
+            (x_min, plat_top), (x_min, plat_bottom),       # plat haut + gauche
+            (x_min, fond_top), (x_min, 0),                 # fond gauche
+        ]
+        bend2_x = x_max + BA/2
+    else:
+        cote_tip_x = x_min - BA - cote_h
+        pts = [
+            (x_min, 0), (x_max, 0),
+            (x_max, fond_top), (x_max, plat_bottom),
+            (x_max, plat_top),
+            (x_min - BA, plat_top),                        # coin haut triangle
+            (cote_tip_x, plat_bottom),                     # pointe triangle
+            (x_min, plat_bottom), (x_min, fond_top),
+            (x_min, 0),
+        ]
+        bend2_x = x_min - BA/2
+
+    return pts, fond_top + BA/2, bend2_x, plat_bottom, plat_top
+
+
+def _add_holes(shape, p, axis, offset_func):
+    """Perce les trous pivot et fixation dans une shape."""
+    t = p['t']
+    # Trous pivot
+    for px, py in [(p['dx_dessus'], p['py_dessus']),
+                   (p['dx_dessous'], p['py_dessous'])]:
+        shape = shape.cut(offset_func('pivot', px, py))
+    # Trous fixation
+    for dx in p['fix_xs']:
+        for dz in p['fix_zs_rel']:
+            shape = shape.cut(offset_func('fix', dx, dz))
+    return shape
+
+
+def make_patron_plat(depth_dessus, depth_dessous, dx_dessus, dx_dessous,
+                     cote_side='right'):
+    """Patron a plat (source unique). Cote triangulaire + coins arrondis.
+    Plan XZ, extrude en Y par TOLE. Pour decoupe laser et TechDraw."""
+    p = platine_params(depth_dessus, depth_dessous, dx_dessus, dx_dessous, cote_side)
+    t = p['t']
+    pts_2d, bend1_z, bend2_x, plat_bottom, plat_top = _platine_contour_2d(p)
+
+    # Contour -> wire -> face -> extrude
+    pts_3d = [App.Vector(x, 0, z) for x, z in pts_2d]
+    wire = Part.makePolygon(pts_3d + [pts_3d[0]])
+    face = Part.Face(wire)
+    shape = face.extrude(App.Vector(0, t, 0))
+
+    # Arrondir les coins exterieurs
+    try:
+        edges_to_fillet = [e for e in shape.Edges
+                           if e.Length > t*0.8 and e.Length < t*1.2]
+        if edges_to_fillet:
+            shape = shape.makeFillet(FILLET_R, edges_to_fillet)
+    except:
+        pass
+
+    # Trous
+    def offset_patron(kind, a, b):
+        if kind == 'pivot':
+            pz = plat_bottom + t + max(b - TOLE, 20) if b > TOLE else plat_bottom + 20
+            # b = py from platine_params = TOLE + depth
+            return Part.makeCylinder(AXE_HOLE/2, t+20,
+                App.Vector(a, -10, plat_bottom + b), App.Vector(0,1,0))
+        else:  # fix
+            return Part.makeCylinder(6, t+10,
+                App.Vector(a, -5, b), App.Vector(0,1,0))
+
+    # Trous pivot dans le plat
+    for px, py in [(p['dx_dessus'], p['py_dessus']),
+                   (p['dx_dessous'], p['py_dessous'])]:
+        shape = shape.cut(Part.makeCylinder(AXE_HOLE/2, t+20,
+            App.Vector(px, -10, plat_bottom + py), App.Vector(0,1,0)))
+    # Trous fixation dans le fond
+    for dx in p['fix_xs']:
+        for dz in p['fix_zs_rel']:
+            shape = shape.cut(Part.makeCylinder(6, t+10,
+                App.Vector(dx, -5, dz), App.Vector(0,1,0)))
+
+    # Rainure pliage
+    shape = shape.cut(Part.makeBox(p['w'], t*0.3, 1,
+        App.Vector(p['x_min'], t*0.7, bend1_z - 0.5)))
+
+    return shape, bend1_z, bend2_x
+
+
+def make_platine_3d(depth_dessus, depth_dessous, dx_dessus, dx_dessous,
+                    z_mid, cote_side='right'):
+    """Platine 3D pliee, derivee des MEMES parametres que le patron.
+    Fond vertical (XZ) + plat horizontal (XY) + cote triangulaire."""
+    p = platine_params(depth_dessus, depth_dessous, dx_dessus, dx_dessous, cote_side)
+    t = p['t']
+    x_min, x_max, w = p['x_min'], p['x_max'], p['w']
+    plat_depth, cote_h = p['plat_depth'], p['cote_h']
     z_top = z_mid; z_bottom = z_top - FOND_H
-    cote_h = min(FOND_H * 0.6, 100)
-    z_bras1 = z_mid + t/2 + TUBE_H/2
-    z_bras2 = z_mid - t/2 - TUBE_H/2
 
     shapes = []
-    # FOND
+
+    # FOND (vertical XZ)
     shapes.append(Part.makeBox(w, t, FOND_H, App.Vector(x_min, 0, z_bottom)))
-    # PLAT (au sommet du fond)
+
+    # PLAT (horizontal XY, au sommet du fond)
     shapes.append(Part.makeBox(w, plat_depth, t, App.Vector(x_min, t, z_top - t)))
-    # COTE triangulaire (gousset, bord oppose aux bras)
-    # Triangle: de (y=t, z=z_top-t) en haut a (y=t+plat_depth, z=z_top-t-cote_h) en bas
-    if cote_side == 'right':
-        cote_x = x_max - t
-    else:
-        cote_x = x_min
+
+    # COTE triangulaire (gousset) — meme triangle que le patron
+    cote_x = (x_max - t) if cote_side == 'right' else x_min
     tri_pts = [
         App.Vector(cote_x, t, z_top - t),
         App.Vector(cote_x, t + plat_depth, z_top - t),
         App.Vector(cote_x, t, z_top - t - cote_h),
-        App.Vector(cote_x, t, z_top - t),  # fermer
+        App.Vector(cote_x, t, z_top - t),
     ]
-    tri_wire = Part.makePolygon(tri_pts)
-    tri_face = Part.Face(tri_wire)
+    tri_face = Part.Face(Part.makePolygon(tri_pts))
     shapes.append(tri_face.extrude(App.Vector(t, 0, 0)))
 
     # BOULONS integres
     axe_l = TOLE + TUBE_H + 15
-    py_dessus = t + max(depth_dessus, 20)
-    py_dessous = t + max(depth_dessous, 20)
     shapes.append(Part.makeCylinder(AXE_D/2, axe_l,
-        App.Vector(dx_dessus, py_dessus, z_top - t), App.Vector(0,0,1)))
+        App.Vector(p['dx_dessus'], p['py_dessus'], z_top - t), App.Vector(0,0,1)))
     shapes.append(Part.makeCylinder(AXE_D/2, axe_l,
-        App.Vector(dx_dessous, py_dessous, z_top - axe_l), App.Vector(0,0,1)))
+        App.Vector(p['dx_dessous'], p['py_dessous'], z_top - axe_l), App.Vector(0,0,1)))
 
     result = shapes[0]
     for s in shapes[1:]: result = result.fuse(s)
 
     # Trous pivot
-    for px, py in [(dx_dessus, py_dessus), (dx_dessous, py_dessous)]:
+    for px, py in [(p['dx_dessus'], p['py_dessus']),
+                   (p['dx_dessous'], p['py_dessous'])]:
         result = result.cut(Part.makeCylinder(AXE_HOLE/2, t+20,
             App.Vector(px, py, z_top-t-10), App.Vector(0,0,1)))
-    # Trous fixation fond
-    for dx in [x_min+25, 0, x_max-25]:
-        for dz in [z_bottom+FOND_H*0.25, z_bottom+FOND_H*0.75]:
+
+    # Trous fixation
+    for dx in p['fix_xs']:
+        for dz in p['fix_zs_rel']:
             result = result.cut(Part.makeCylinder(6, t+10,
-                App.Vector(dx, -5, dz), App.Vector(0,1,0)))
-    return result
+                App.Vector(dx, -5, z_bottom + dz), App.Vector(0,1,0)))
 
-
-BEND_R = 3        # rayon de pliage
-K_FACTOR = 0.44
-BA = (math.pi / 2) * (BEND_R + K_FACTOR * TOLE)  # ~8.2mm bend allowance
-FILLET_R = 3      # rayon des coins arrondis (laser-friendly)
-
-def make_patron_plat(depth_dessus, depth_dessous, dx_dessus, dx_dessous,
-                     cote_side='right'):
-    """
-    Patron a plat pour decoupe laser. Cote TRIANGULAIRE + coins arrondis.
-
-    Pour cote_side='right':
-
-        x_min     x_max
-          |         |
-          +---------+              Z = plat_top
-          |  PLAT   +--__
-          | (pivots)|    --__      triangle (gousset)
-          |         |        --+   Z = plat_bottom + pli 2
-          +--pli 1--+             Z = FOND_H
-          |         |
-          |  FOND   |
-          |  (vis)  |
-          +---------+             Z = 0
-
-    Coins exterieurs arrondis (R=3mm) pour securite et laser.
-    """
-    t = TOLE; margin = 40
-
-    x_min = min(dx_dessus, dx_dessous) - margin
-    x_max = max(dx_dessus, dx_dessous) + margin
-    w = x_max - x_min
-
-    max_depth = max(depth_dessus, depth_dessous)
-    plat_depth = max_depth + PIVOT_MARGIN + AXE_HOLE/2
-    cote_h = min(FOND_H * 0.6, 100)
-
-    # Positions Z
-    fond_bottom = 0
-    fond_top = FOND_H
-    plat_bottom = fond_top + BA
-    plat_top = plat_bottom + plat_depth
-
-    # Contour 2D du patron (dans le plan XZ, extrudé en Y par TOLE)
-    # Le cote est un TRIANGLE au lieu d'un rectangle
-    pts = []
-
-    if cote_side == 'right':
-        bend2_x = x_max + BA/2
-        cote_tip_x = x_max + BA + cote_h  # pointe du triangle
-
-        pts = [
-            # Fond (rectangle, bas)
-            App.Vector(x_min, 0, fond_bottom),
-            App.Vector(x_max, 0, fond_bottom),
-            App.Vector(x_max, 0, fond_top),
-            # Zone BA pli 1 (on la traverse)
-            App.Vector(x_max, 0, plat_bottom),
-            # Plat + triangle cote
-            App.Vector(cote_tip_x, 0, plat_bottom),  # pointe basse du triangle
-            App.Vector(x_max + BA, 0, plat_top),      # coin haut du triangle (= bord plat + BA)
-            App.Vector(x_min, 0, plat_top),            # coin haut gauche du plat
-            App.Vector(x_min, 0, plat_bottom),
-            # Zone BA pli 1
-            App.Vector(x_min, 0, fond_top),
-            App.Vector(x_min, 0, fond_bottom),         # fermer
-        ]
-    else:
-        bend2_x = x_min - BA/2
-        cote_tip_x = x_min - BA - cote_h
-
-        pts = [
-            # Fond (rectangle, bas)
-            App.Vector(x_min, 0, fond_bottom),
-            App.Vector(x_max, 0, fond_bottom),
-            App.Vector(x_max, 0, fond_top),
-            App.Vector(x_max, 0, plat_bottom),
-            App.Vector(x_max, 0, plat_top),
-            # Plat + triangle cote a gauche
-            App.Vector(x_min - BA, 0, plat_top),       # coin haut gauche (bord plat - BA)
-            App.Vector(cote_tip_x, 0, plat_bottom),    # pointe basse du triangle
-            App.Vector(x_min, 0, plat_bottom),
-            App.Vector(x_min, 0, fond_top),
-            App.Vector(x_min, 0, fond_bottom),          # fermer
-        ]
-
-    # Creer le Wire et la Face
-    wire = Part.makePolygon(pts + [pts[0]])  # fermer le polygone
-    face = Part.Face(wire)
-
-    # Arrondir les coins exterieurs
-    shape = face.extrude(App.Vector(0, t, 0))
+    # Arrondir les coins du plat (memes fillets que le patron)
     try:
-        # Fillet sur tous les edges verticaux (paralleles a Y = epaisseur)
-        edges_to_fillet = []
-        for i, edge in enumerate(shape.Edges):
-            if edge.Length > t * 0.8 and edge.Length < t * 1.2:
-                # C'est un edge d'epaisseur (parallele a Y)
-                edges_to_fillet.append(edge)
+        edges_to_fillet = [e for e in result.Edges
+                           if e.Length > t*0.8 and e.Length < t*1.2]
         if edges_to_fillet:
-            shape = shape.makeFillet(FILLET_R, edges_to_fillet)
+            result = result.makeFillet(FILLET_R, edges_to_fillet)
     except:
-        pass  # si le fillet echoue, garder les coins vifs
+        pass
 
-    # --- Trous pivot dans la section plat ---
-    pz_dessus = plat_bottom + t + max(depth_dessus, 20)
-    pz_dessous = plat_bottom + t + max(depth_dessous, 20)
-    for px, pz in [(dx_dessus, pz_dessus), (dx_dessous, pz_dessous)]:
-        shape = shape.cut(Part.makeCylinder(AXE_HOLE/2, t+20,
-            App.Vector(px, -10, pz), App.Vector(0, 1, 0)))
-
-    # --- Trous fixation dans le fond ---
-    for dx in [x_min+25, 0, x_max-25]:
-        for dz in [FOND_H*0.25, FOND_H*0.75]:
-            shape = shape.cut(Part.makeCylinder(6, t+10,
-                App.Vector(dx, -5, dz), App.Vector(0, 1, 0)))
-
-    # --- Rainures de pliage (visuelles, mi-profondeur) ---
-    shape = shape.cut(Part.makeBox(w, t*0.3, 1,
-        App.Vector(x_min, t*0.7, fond_top + BA/2 - 0.5)))
-
-    return shape, fond_top + BA/2, bend2_x
+    return result
 
 
 ARM_EXTEND = 20  # depassement du tube au-dela de chaque pivot (mm)
@@ -327,7 +338,7 @@ def create_mechanism(asm, suffix, z_mid):
 
     # Platine murale
     pm = asm.newObject('Part::Feature', f'PlatMur{suffix}')
-    pm.Shape = make_platine_combinee(
+    pm.Shape = make_platine_3d(
         DEPTH_A, DEPTH_B,
         Ax - MUR_CENTER_X, Bx - MUR_CENTER_X,
         z_mid, cote_side='right')
@@ -335,7 +346,7 @@ def create_mechanism(asm, suffix, z_mid):
 
     # Platine porte
     pp = asm.newObject('Part::Feature', f'PlatPorte{suffix}')
-    pp.Shape = make_platine_combinee(
+    pp.Shape = make_platine_3d(
         DEPTH_a, DEPTH_b,
         ax_d - PORTE_CENTER_X, bx_d - PORTE_CENTER_X,
         z_mid, cote_side='left')
